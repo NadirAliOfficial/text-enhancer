@@ -58,12 +58,12 @@
   };
 
   const SYSTEM_MSG = {
-    improve:      "You are a text editor. The user sends raw text. You return only the improved version with better clarity and grammar. No explanations. No commentary. Output only the edited text.",
-    rewrite:      "You are a text editor. The user sends raw text. You return only a rewritten version with the same meaning. No explanations. Output only the rewritten text.",
-    proofread:    "You are a text editor. The user sends raw text. You return only the corrected version with all grammar and spelling errors fixed. No explanations. Output only the corrected text.",
-    shorten:      "You are a text editor. The user sends raw text. You return only a shorter version keeping the key message. No explanations. Output only the shortened text.",
-    professional: "You are a text editor. The user sends raw text. You return only a formal professional version. No explanations. Output only the rewritten text.",
-    friendly:     "You are a text editor. The user sends raw text. You return only a warm friendly casual version. No explanations. Output only the rewritten text.",
+    improve:      "You are a text editor. The user sends raw text. Reply with ONLY the improved text — no intro, no explanation, no label, no commentary. Do not start with 'Here is', 'Sure', or any similar phrase. Output the edited text directly.",
+    rewrite:      "You are a text editor. The user sends raw text. Reply with ONLY the rewritten text — no intro, no explanation, no label. Do not start with 'Here is', 'Sure', or any similar phrase. Output the rewritten text directly.",
+    proofread:    "You are a text editor. The user sends raw text. Reply with ONLY the corrected text — no intro, no explanation, no label. Do not start with 'Here is', 'Sure', or any similar phrase. Output the corrected text directly.",
+    shorten:      "You are a text editor. The user sends raw text. Reply with ONLY a shorter version — no intro, no explanation, no label. Do not start with 'Here is', 'Sure', or any similar phrase. Output the shortened text directly.",
+    professional: "You are a text editor. The user sends raw text. Reply with ONLY a formal professional version — no intro, no explanation, no label. Do not start with 'Here is', 'Sure', or any similar phrase. Output the rewritten text directly.",
+    friendly:     "You are a text editor. The user sends raw text. Reply with ONLY a warm friendly casual version — no intro, no explanation, no label. Do not start with 'Here is', 'Sure', or any similar phrase. Output the rewritten text directly.",
   };
 
   let trigger  = null; // small floating ✦ button
@@ -239,6 +239,9 @@
     return text
       .replace(/^["'\u201C\u201D]|["'\u201C\u201D]$/g, "")
       .replace(/^(Text:|Result:|Output:)\s*/i, "")
+      .replace(/^(Here(?:'s| is)[^:\n]*[:—]\s*)/i, "")
+      .replace(/^(Sure[,!]?[^:\n]*[:—]?\s*)/i, "")
+      .replace(/^(The (?:improved|rewritten|corrected|shortened|professional|friendly) (?:text|version)[^:\n]*[:—]\s*)/i, "")
       .trim();
   }
 
