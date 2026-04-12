@@ -4,7 +4,7 @@
   // Don't run inside our own extension pages
   if (window.location.protocol === "chrome-extension:") return;
 
-  const MODEL = "llama3.2";
+  const MODEL = "llama3.2:1b";
 
   const ACTIONS = [
     { label: "Improve",      type: "improve",      icon: "✨" },
@@ -410,6 +410,42 @@
       .trimStart();
   }
 
+  // ── Smart action detection ────────────────────────────────────────────────
+
+  function typoScore(text) {
+    let score = 0;
+    const lo = text.toLowerCase();
+    // Shorthand / chat abbreviations
+    if (/\b(u|r|ur|pls|thx|ty|idk|omg|lol|btw|fyi|asap|tbh|imo|ngl|smh)\b/.test(lo)) score++;
+    // Missing apostrophes in contractions
+    if (/\b(dont|cant|wont|im|ive|its|theyre|youre|didnt|wasnt|isnt|wouldnt|couldnt|havent|shouldnt)\b/.test(lo)) score++;
+    // All lowercase with meaningful length
+    if (text.length > 20 && text === text.toLowerCase()) score++;
+    // Common misspellings
+    if (/\b(recieve|occured|seperate|definately|freind|wierd|beleive|untill|begining|goverment|occassion)\b/.test(lo)) score++;
+    return score;
+  }
+
+  // Pick the best action based on what the text actually needs
+  function pickAction(text) {
+    if (text.length > 220)   return "shorten";
+    if (typoScore(text) >= 2) return "proofread";
+    return "improve";
+  }
+
+  // Returns true if suggestion is too similar to original to be worth showing
+  function tooSimilar(original, suggestion) {
+    const norm = s => s.toLowerCase().replace(/[^\w\s]/g, "").trim();
+    const a = norm(original);
+    const b = norm(suggestion);
+    if (a === b) return true;
+    const setA = new Set(a.split(/\s+/));
+    const setB = new Set(b.split(/\s+/));
+    const shared = [...setA].filter(w => setB.has(w)).length;
+    const union  = new Set([...setA, ...setB]).size;
+    return shared / union >= 0.88;
+  }
+
   // Open a streaming port to background, call onToken(rawSoFar) as tokens arrive,
   // onDone(cleanedFinal) when complete, onError(msg) on failure.
   // Returns the port — disconnect it to cancel.
@@ -495,21 +531,22 @@
         const current = getText(el).trim();
         if (current.length < 15 || current === lastSuggestInput) return;
 
-        const myId = ++suggestGenId;
+        const myId   = ++suggestGenId;
+        const action = pickAction(current);
         lastSuggestInput = current;
         showSuggestLoading(el);
 
         streamPort?.disconnect();
         streamPort = streamOllama(
           current,
-          "improve",
+          action,
           (preview) => { // called each token
             if (suggestGenId !== myId) return;
             showSuggestResult(preview);
           },
           (final) => {   // called when complete
             if (suggestGenId !== myId) return;
-            if (final && final !== current) showSuggestResult(final);
+            if (final && !tooSimilar(current, final)) showSuggestResult(final);
             else hideSuggest();
           },
           () => {        // error

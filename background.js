@@ -80,7 +80,7 @@ fetch("http://localhost:11434/api/chat", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
-    model: "llama3.2",
+    model: "llama3.2:1b",
     stream: false,
     messages: [{ role: "user", content: "." }],
     options: { num_predict: 1, num_ctx: 256, keep_alive: -1 },
