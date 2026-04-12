@@ -86,6 +86,8 @@
   box-shadow: 0 4px 18px rgba(0,0,0,0.45);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   animation: te-fadein 0.18s ease;
+  cursor: grab;
+  user-select: none;
 }
 
 #te-suggest-label {
@@ -117,6 +119,8 @@
   transition: background 0.1s;
 }
 
+#te-suggest-accept,
+#te-suggest-dismiss { cursor: pointer; }
 #te-suggest-accept:hover { background: #004182; }
 #te-suggest-accept.undo  { background: #333; }
 #te-suggest-accept.undo:hover { background: #444; }

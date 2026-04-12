@@ -69,12 +69,13 @@
   let suggest  = null; // auto-suggestion bar
   let focused  = null; // currently focused editable element
 
-  let suggestFor       = null; // element the suggestion targets
-  let suggestText      = "";   // suggested replacement text
-  let suggestGenId     = 0;    // increments each request — stale responses are dropped
-  let lastSuggestInput = "";   // last text we suggested for (avoid re-triggering)
-  let streamPort       = null; // active streaming port (disconnect to cancel)
-  let pendingUndo      = null; // { el, original } — set when in undo state
+  let suggestFor       = null;  // element the suggestion targets
+  let suggestText      = "";    // suggested replacement text
+  let suggestGenId     = 0;     // increments each request — stale responses are dropped
+  let lastSuggestInput = "";    // last text we suggested for (avoid re-triggering)
+  let streamPort       = null;  // active streaming port (disconnect to cancel)
+  let pendingUndo      = null;  // { el, original } — set when in undo state
+  let suggestDragged   = false; // true after user drags the bar — skip auto-reposition
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -195,29 +196,53 @@
     suggest.appendChild(accept);
     suggest.appendChild(dismiss);
     document.documentElement.appendChild(suggest);
+
+    // ── Drag to reposition ──────────────────────────────────────────────────
+    let drag = null;
+    suggest.addEventListener("mousedown", (e) => {
+      if (e.target.tagName === "BUTTON") return; // don't drag when clicking buttons
+      e.preventDefault();
+      const r = suggest.getBoundingClientRect();
+      drag = { ox: e.clientX - r.left, oy: e.clientY - r.top };
+      suggest.style.cursor = "grabbing";
+    });
+    document.addEventListener("mousemove", (e) => {
+      if (!drag) return;
+      suggestDragged = true;
+      const x = Math.max(0, Math.min(e.clientX - drag.ox, window.innerWidth  - suggest.offsetWidth  - 4));
+      const y = Math.max(0, Math.min(e.clientY - drag.oy, window.innerHeight - suggest.offsetHeight - 4));
+      suggest.style.left = x + "px";
+      suggest.style.top  = y + "px";
+    });
+    document.addEventListener("mouseup", () => {
+      if (drag) { drag = null; suggest.style.cursor = ""; }
+    });
+
     return suggest;
   }
 
   function positionSuggest(el) {
-    if (!suggest || suggest.style.display === "none") return;
+    if (!suggest || suggest.style.display === "none" || suggestDragged) return;
     const r = el.getBoundingClientRect();
-    const s = suggest;
-    s.style.top  = (r.bottom + 6) + "px";
-    s.style.left = Math.max(8, r.left) + "px";
-    s.style.maxWidth = Math.min(520, window.innerWidth - Math.max(8, r.left) - 12) + "px";
+    suggest.style.top      = (r.bottom + 6) + "px";
+    suggest.style.left     = Math.max(8, r.left) + "px";
+    suggest.style.maxWidth = Math.min(520, window.innerWidth - Math.max(8, r.left) - 12) + "px";
   }
 
-  function showSuggestLoading(el) {
-    suggestFor = el;
+  const ACTION_LABELS = { improve: "Improve", proofread: "Proofread", shorten: "Shorten", rewrite: "Rewrite", professional: "Professional", friendly: "Friendly" };
+
+  function showSuggestLoading(el, action) {
+    suggestFor    = el;
+    suggestDragged = false; // reset drag so bar re-anchors below the input
     const s = getSuggest();
     s.style.borderColor = "";
-    s.querySelector("#te-suggest-text").textContent = "Analyzing…";
+    s.querySelector("#te-suggest-label").textContent = "✨ " + (ACTION_LABELS[action] || "");
+    s.querySelector("#te-suggest-text").textContent  = "Analyzing…";
     const accept = s.querySelector("#te-suggest-accept");
-    accept.textContent = "Accept (Tab)";
-    accept.style.background = "";
-    accept.style.display = "none";
-    const dismiss = s.querySelector("#te-suggest-dismiss");
-    dismiss.textContent = "✕";
+    accept.textContent       = "Accept (Tab)";
+    accept.style.background  = "";
+    accept.style.display     = "none";
+    s.querySelector("#te-suggest-dismiss").textContent = "✕";
     const r = el.getBoundingClientRect();
     s.style.top      = (r.bottom + 6) + "px";
     s.style.left     = Math.max(8, r.left) + "px";
@@ -234,8 +259,9 @@
 
   function hideSuggest() {
     streamPort?.disconnect();
-    streamPort  = null;
-    pendingUndo = null;
+    streamPort     = null;
+    pendingUndo    = null;
+    suggestDragged = false;
     if (suggest) suggest.style.display = "none";
     suggestFor  = null;
     suggestText = "";
@@ -245,16 +271,19 @@
   function showUndoState(el, original) {
     const s = getSuggest();
     s.style.borderColor = "#22c55e";
-    s.querySelector("#te-suggest-text").textContent = "Applied ✓";
+    s.querySelector("#te-suggest-label").textContent = "✓";
+    s.querySelector("#te-suggest-text").textContent  = "Applied";
     const accept = s.querySelector("#te-suggest-accept");
-    accept.textContent = "Undo";
+    accept.textContent      = "Undo";
     accept.style.background = "#333";
-    accept.style.display = "";
+    accept.style.display    = "";
     pendingUndo = { el, original };
     s.querySelector("#te-suggest-dismiss").textContent = "✕";
-    const r = el.getBoundingClientRect();
-    s.style.top     = (r.bottom + 6) + "px";
-    s.style.left    = Math.max(8, r.left) + "px";
+    if (!suggestDragged) {
+      const r = el.getBoundingClientRect();
+      s.style.top  = (r.bottom + 6) + "px";
+      s.style.left = Math.max(8, r.left) + "px";
+    }
     s.style.display = "flex";
     setTimeout(() => { hideSuggest(); }, 4000);
   }
@@ -437,9 +466,18 @@
     return score;
   }
 
+  // Returns true if text is a URL, email, or code — skip auto-suggest
+  function shouldSkip(text) {
+    const t = text.trim();
+    if (/^https?:\/\/\S+$/.test(t))          return true; // URL
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t)) return true; // email
+    if (/[{}\[\]<>]|function\s*\(|=>\s*{|import\s+|const\s+|var\s+|def\s+/.test(t)) return true; // code
+    return false;
+  }
+
   // Pick the best action based on what the text actually needs
   function pickAction(text) {
-    if (text.length > 220)   return "shorten";
+    if (text.length > 220)    return "shorten";
     if (typoScore(text) >= 2) return "proofread";
     return "improve";
   }
@@ -535,17 +573,17 @@
     if (text.length < 4) { hideTrigger(); return; }
     positionTrigger(el);
 
-    // Auto-suggest: stream after 1.5s pause, text ≥8 chars, only if changed
-    if (text.length >= 8 && text !== lastSuggestInput) {
+    // Auto-suggest: stream after 1.5s pause, text ≥8 chars, only if changed and not a URL/code
+    if (text.length >= 8 && text !== lastSuggestInput && !shouldSkip(text)) {
       suggestTimer = setTimeout(() => {
         if (focused !== el) return;
         const current = getText(el).trim();
-        if (current.length < 8 || current === lastSuggestInput) return;
+        if (current.length < 8 || current === lastSuggestInput || shouldSkip(current)) return;
 
         const myId   = ++suggestGenId;
         const action = pickAction(current);
         lastSuggestInput = current;
-        showSuggestLoading(el);
+        showSuggestLoading(el, action);
 
         streamPort?.disconnect();
         streamPort = streamOllama(
