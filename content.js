@@ -56,12 +56,12 @@
   };
 
   const SYSTEM_MSG = {
-    improve:      "You are a text transformer. The user sends text wrapped in <input> tags. Output ONLY the improved version — better clarity and grammar, same meaning. Keep the same speaker and perspective as the original. Do NOT reply to the text. Do NOT answer questions in it. Do NOT add content not in the original. Do NOT add any intro, label, or explanation. Output just the transformed text.",
-    rewrite:      "You are a text transformer. The user sends text wrapped in <input> tags. Output ONLY a rephrased version with the same meaning. Keep the same speaker and perspective as the original — if the input says 'I sent you', output must also say 'I sent you', not 'you sent me'. Do NOT reply to the text. Do NOT answer questions in it. Do NOT add any intro, label, or explanation. Output just the transformed text.",
-    proofread:    "You are a text transformer. The user sends text wrapped in <input> tags. Output ONLY the corrected text with all grammar, spelling, and punctuation errors fixed. Keep the same speaker and perspective. Do NOT reply to the text. Do NOT answer questions in it. Do NOT add any intro, label, or explanation. Output just the corrected text.",
-    shorten:      "You are a text transformer. The user sends text wrapped in <input> tags. Output ONLY a shorter version that keeps the key message. Keep the same speaker and perspective as the original — do not switch who is speaking or who is being addressed. Do NOT reply to the text. Do NOT answer questions in it. Do NOT add any intro, label, or explanation.",
-    professional: "You are a text transformer. The user sends text wrapped in <input> tags. Output ONLY a formal professional version. Use only what is in the original — do NOT add opinions, context, or new content. Keep the same speaker and perspective. Do NOT reply to the text. Do NOT answer questions in it. Do NOT add any intro, label, or explanation. Output just the transformed text.",
-    friendly:     "You are a text transformer. The user sends text wrapped in <input> tags. Output ONLY a warm, friendly, casual version. Keep the same speaker and perspective. Do NOT reply to the text. Do NOT answer questions in it. Do NOT add any intro, label, or explanation. Output just the transformed text.",
+    improve:      "Rewrite the text in <input> tags with better clarity and grammar. Output ONLY the result, same meaning and perspective, no explanation.",
+    rewrite:      "Rephrase the text in <input> tags. Output ONLY the result, same meaning and speaker perspective, no explanation.",
+    proofread:    "Fix all grammar and spelling in the text in <input> tags. Output ONLY the corrected text, no explanation.",
+    shorten:      "Shorten the text in <input> tags, keep core meaning and speaker. Output ONLY the result, no explanation.",
+    professional: "Make the text in <input> tags formal and professional. Output ONLY the result, same perspective, no added content.",
+    friendly:     "Make the text in <input> tags warm and casual. Output ONLY the result, same perspective, no explanation.",
   };
 
   let trigger  = null; // small floating ✦ button
@@ -73,6 +73,7 @@
   let suggestText      = "";   // suggested replacement text
   let suggestGenId     = 0;    // increments each request — stale responses are dropped
   let lastSuggestInput = "";   // last text we suggested for (avoid re-triggering)
+  let streamPort       = null; // active streaming port (disconnect to cancel)
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -195,13 +196,19 @@
   function showSuggestLoading(el) {
     suggestFor = el;
     const s = getSuggest();
+    s.style.borderColor = "";
     s.querySelector("#te-suggest-text").textContent = "Analyzing…";
-    s.querySelector("#te-suggest-accept").style.display = "none";
+    const accept = s.querySelector("#te-suggest-accept");
+    accept.textContent = "Accept (Tab)";
+    accept.style.background = "";
+    accept.style.display = "none";
+    const dismiss = s.querySelector("#te-suggest-dismiss");
+    dismiss.textContent = "✕";
     const r = el.getBoundingClientRect();
-    s.style.top  = (r.bottom + 6) + "px";
-    s.style.left = Math.max(8, r.left) + "px";
+    s.style.top      = (r.bottom + 6) + "px";
+    s.style.left     = Math.max(8, r.left) + "px";
     s.style.maxWidth = Math.min(520, window.innerWidth - Math.max(8, r.left) - 12) + "px";
-    s.style.display = "flex";
+    s.style.display  = "flex";
   }
 
   function showSuggestResult(text) {
@@ -212,25 +219,56 @@
   }
 
   function hideSuggest() {
+    streamPort?.disconnect();
+    streamPort = null;
     if (suggest) suggest.style.display = "none";
     suggestFor  = null;
     suggestText = "";
-    suggestGenId++; // invalidate any in-flight request
+    suggestGenId++;
+  }
+
+  function showUndoState(el, original) {
+    const s = getSuggest();
+    s.style.borderColor = "#22c55e";
+    s.querySelector("#te-suggest-text").textContent = "Applied ✓";
+    const accept = s.querySelector("#te-suggest-accept");
+    accept.textContent = "Undo";
+    accept.style.background = "#333";
+    accept.style.display = "";
+    accept.onclick = () => {
+      setText(el, original);
+      lastSuggestInput = original;
+      el.focus();
+      hideSuggest();
+      accept.onclick = null;
+    };
+    s.querySelector("#te-suggest-dismiss").textContent = "✕";
+    const r = el.getBoundingClientRect();
+    s.style.top     = (r.bottom + 6) + "px";
+    s.style.left    = Math.max(8, r.left) + "px";
+    s.style.display = "flex";
+    setTimeout(() => { hideSuggest(); accept.onclick = null; }, 4000);
   }
 
   function applySuggestion() {
     if (suggestFor && suggestText) {
-      lastSuggestInput = suggestText; // set BEFORE setText fires the input event
-      clearTimeout(suggestTimer);     // cancel any queued next suggest
-      suggestGenId++;                 // drop any in-flight request
-      const el = suggestFor;
-      hideSuggest();
-      setText(el, lastSuggestInput);
+      const el       = suggestFor;
+      const original = getText(el).trim();
+      const replacement = suggestText;
+      lastSuggestInput = replacement;
+      clearTimeout(suggestTimer);
+      suggestGenId++;
+      streamPort?.disconnect(); streamPort = null;
+      suggestFor  = null;
+      suggestText = "";
+      setText(el, replacement);
       el.focus();
+      hideMenu();
+      showUndoState(el, original);
     } else {
       hideSuggest();
+      hideMenu();
     }
-    hideMenu();
   }
 
   // ── Action menu ───────────────────────────────────────────────────────────
@@ -333,7 +371,7 @@
           payload: {
             model: MODEL,
             stream: false,
-            options: { temperature: 0.3, num_predict: 160, num_ctx: 1024 },
+            options: { temperature: 0.3, num_predict: 160, num_ctx: 1024, keep_alive: -1 },
             messages: [
               { role: "system", content: SYSTEM_MSG[type] },
               ...SHOTS[type],
@@ -359,6 +397,54 @@
       .replace(/^(Sure[,!]?[^:\n]*[:—]?\s*)/i, "")
       .replace(/^(The (?:improved|rewritten|corrected|shortened|professional|friendly) (?:text|version)[^:\n]*[:—]\s*)/i, "")
       .trim();
+  }
+
+  // Same as clean() but trims only the left (for live stream preview)
+  function cleanLeft(text) {
+    return text
+      .replace(/^["'\u201C\u201D]/, "")
+      .replace(/^(Text:|Result:|Output:)\s*/i, "")
+      .replace(/^(Here(?:'s| is)[^:\n]*[:—]\s*)/i, "")
+      .replace(/^(Sure[,!]?[^:\n]*[:—]?\s*)/i, "")
+      .replace(/^(The (?:improved|rewritten|corrected|shortened|professional|friendly) (?:text|version)[^:\n]*[:—]\s*)/i, "")
+      .trimStart();
+  }
+
+  // Open a streaming port to background, call onToken(rawSoFar) as tokens arrive,
+  // onDone(cleanedFinal) when complete, onError(msg) on failure.
+  // Returns the port — disconnect it to cancel.
+  function streamOllama(text, type, onToken, onDone, onError) {
+    let port;
+    try { port = chrome.runtime.connect({ name: "te-stream" }); }
+    catch (_) { onError("Reload page and retry"); return null; }
+
+    let raw = "";
+
+    port.onMessage.addListener((msg) => {
+      if (msg.error) { onError(msg.error); return; }
+      if (msg.token) {
+        raw += msg.token;
+        const preview = cleanLeft(raw);
+        if (preview) onToken(preview);
+      }
+      if (msg.done) onDone(clean(raw));
+    });
+
+    port.onDisconnect.addListener(() => {
+      if (chrome.runtime.lastError) onError("Reload page and retry");
+    });
+
+    port.postMessage({
+      model: MODEL,
+      messages: [
+        { role: "system", content: SYSTEM_MSG[type] },
+        ...SHOTS[type],
+        { role: "user", content: `<input>${text}</input>` },
+      ],
+      options: { temperature: 0.3, num_predict: 160, num_ctx: 1024, keep_alive: -1 },
+    });
+
+    return port;
   }
 
   // ── Action ────────────────────────────────────────────────────────────────
@@ -402,25 +488,35 @@
     if (text.length < 4) { hideTrigger(); return; }
     positionTrigger(el);
 
-    // Auto-suggest: fire "improve" after 1.5s pause, text ≥15 chars, only if changed
+    // Auto-suggest: stream "improve" after 1.5s pause, text ≥15 chars, only if changed
     if (text.length >= 15 && text !== lastSuggestInput) {
-      suggestTimer = setTimeout(async () => {
+      suggestTimer = setTimeout(() => {
         if (focused !== el) return;
         const current = getText(el).trim();
         if (current.length < 15 || current === lastSuggestInput) return;
+
         const myId = ++suggestGenId;
         lastSuggestInput = current;
         showSuggestLoading(el);
-        try {
-          const result = await callOllama(current, "improve");
-          if (suggestGenId === myId && focused === el && result && result !== current) {
-            showSuggestResult(result);
-          } else if (suggestGenId === myId) {
+
+        streamPort?.disconnect();
+        streamPort = streamOllama(
+          current,
+          "improve",
+          (preview) => { // called each token
+            if (suggestGenId !== myId) return;
+            showSuggestResult(preview);
+          },
+          (final) => {   // called when complete
+            if (suggestGenId !== myId) return;
+            if (final && final !== current) showSuggestResult(final);
+            else hideSuggest();
+          },
+          () => {        // error
+            if (suggestGenId !== myId) return;
             hideSuggest();
           }
-        } catch (_) {
-          if (suggestGenId === myId) hideSuggest();
-        }
+        );
       }, 1500);
     }
   }
@@ -480,10 +576,32 @@
       clearTimeout(typingTimer);
       clearTimeout(suggestTimer);
     }
+    // Tab to accept suggestion
     if (e.key === "Tab" && suggest && suggest.style.display !== "none" && suggestText) {
       e.preventDefault();
       applySuggestion();
     }
+    // Ctrl+. to toggle action menu on any focused input
+    if (e.key === "." && (e.ctrlKey || e.metaKey) && focused) {
+      e.preventDefault();
+      if (menu && menu.style.display === "flex") hideMenu();
+      else showMenu();
+    }
   });
+
+  // Warmup: ask background to load the model so first real request is instant
+  setTimeout(() => {
+    try {
+      chrome.runtime.sendMessage({
+        type: "ollama",
+        payload: {
+          model: MODEL,
+          stream: false,
+          messages: [{ role: "user", content: "." }],
+          options: { num_predict: 1, num_ctx: 256, keep_alive: -1 },
+        },
+      }, () => { chrome.runtime.lastError; });
+    } catch (_) {}
+  }, 3000);
 
 })();

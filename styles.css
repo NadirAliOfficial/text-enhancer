@@ -118,6 +118,8 @@
 }
 
 #te-suggest-accept:hover { background: #004182; }
+#te-suggest-accept.undo  { background: #333; }
+#te-suggest-accept.undo:hover { background: #444; }
 
 #te-suggest-dismiss {
   padding: 3px 7px;
