@@ -76,6 +76,7 @@
   let streamPort       = null;  // active streaming port (disconnect to cancel)
   let pendingUndo      = null;  // { el, original } — set when in undo state
   let suggestDragged   = false; // true after user drags the bar — skip auto-reposition
+  let triggerDragged   = false; // true after user drags the trigger — skip auto-reposition
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -84,6 +85,8 @@
     const id = el.id;
     if (id === "te-trigger" || id === "te-menu" || id === "te-suggest") return false;
     if (el.closest && el.closest("#te-suggest")) return false;
+    // On LinkedIn, skip all contentEditable divs — the AI commenter handles those
+    if (el.isContentEditable && window.location.hostname.includes("linkedin.com")) return false;
     if (el.isContentEditable) return true;
     const tag = el.tagName;
     if (tag === "TEXTAREA") return true;
@@ -130,23 +133,50 @@
     trigger.id = "te-trigger";
     trigger.title = "Text Enhancer";
     trigger.textContent = "✦";
+
+    let tDrag = null;
+    let tMoved = false;
     trigger.addEventListener("mousedown", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      toggleMenu();
+      const r = trigger.getBoundingClientRect();
+      tDrag  = { ox: e.clientX - r.left, oy: e.clientY - r.top };
+      tMoved = false;
+      trigger.style.cursor = "grabbing";
     });
+    document.addEventListener("mousemove", (e) => {
+      if (!tDrag) return;
+      const dx = e.clientX - (tDrag.ox + parseFloat(trigger.style.left || 0));
+      const dy = e.clientY - (tDrag.oy + parseFloat(trigger.style.top  || 0));
+      if (!tMoved && Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
+      tMoved = true;
+      triggerDragged = true;
+      const x = Math.max(4, Math.min(e.clientX - tDrag.ox, window.innerWidth  - 34));
+      const y = Math.max(4, Math.min(e.clientY - tDrag.oy, window.innerHeight - 34));
+      trigger.style.left = x + "px";
+      trigger.style.top  = y + "px";
+    });
+    document.addEventListener("mouseup", (e) => {
+      if (!tDrag) return;
+      const wasMoved = tMoved;
+      tDrag = null; tMoved = false;
+      trigger.style.cursor = "";
+      if (!wasMoved) toggleMenu();
+    });
+
     document.documentElement.appendChild(trigger);
     return trigger;
   }
 
   function positionTrigger(el) {
     const t = getTrigger();
+    t.style.display = "flex";
+    if (triggerDragged) return; // user repositioned it — leave it there
     const r = el.getBoundingClientRect();
     const top  = r.bottom - 34;
     const left = r.right  - 34;
     t.style.top  = Math.max(4, top)  + "px";
     t.style.left = Math.max(4, left) + "px";
-    t.style.display = "flex";
   }
 
   function hideTrigger() {

@@ -10,7 +10,7 @@
   color: #fff;
   font-size: 15px;
   border-radius: 50%;
-  cursor: pointer;
+  cursor: grab;
   box-shadow: 0 2px 10px rgba(0,0,0,0.35);
   user-select: none;
   transition: background 0.15s, transform 0.1s;
@@ -91,8 +91,11 @@
 }
 
 #te-suggest-label {
-  font-size: 15px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #7ab3e0;
   flex-shrink: 0;
+  white-space: nowrap;
 }
 
 #te-suggest-text {
