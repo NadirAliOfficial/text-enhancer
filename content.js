@@ -94,8 +94,8 @@
 
   function getText(el) {
     if (!el) return "";
-    if (el.isContentEditable) return el.innerText || el.textContent || "";
-    return el.value || "";
+    const raw = el.isContentEditable ? (el.innerText || el.textContent || "") : (el.value || "");
+    return raw.replace(/<\/?input>/gi, ""); // strip any echoed tags before processing
   }
 
   function setText(el, newText) {
@@ -391,6 +391,7 @@
 
   function clean(text) {
     return text
+      .replace(/<\/?input>/gi, "")                                                          // strip echoed XML tags
       .replace(/^["'\u201C\u201D]|["'\u201C\u201D]$/g, "")
       .replace(/^(Text:|Result:|Output:)\s*/i, "")
       .replace(/^(Here(?:'s| is)[^:\n]*[:—]\s*)/i, "")
@@ -402,6 +403,7 @@
   // Same as clean() but trims only the left (for live stream preview)
   function cleanLeft(text) {
     return text
+      .replace(/<\/?input>/gi, "")                                                          // strip echoed XML tags
       .replace(/^["'\u201C\u201D]/, "")
       .replace(/^(Text:|Result:|Output:)\s*/i, "")
       .replace(/^(Here(?:'s| is)[^:\n]*[:—]\s*)/i, "")
