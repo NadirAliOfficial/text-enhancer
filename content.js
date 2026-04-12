@@ -677,27 +677,67 @@
   function showCustomPromptInput(el) {
     const m = getMenu();
     m.innerHTML = "";
+    m.style.minWidth = "260px";
+
     const wrapper = document.createElement("div");
-    wrapper.style.cssText = "padding:8px;display:flex;flex-direction:column;gap:6px;";
+    wrapper.style.cssText = "padding:10px;display:flex;flex-direction:column;gap:8px;";
 
-    const label = document.createElement("div");
-    label.textContent = "Custom instruction:";
-    label.style.cssText = "font-size:11px;color:#aaa;";
+    // Back button row
+    const topRow = document.createElement("div");
+    topRow.style.cssText = "display:flex;align-items:center;gap:6px;";
 
-    const input = document.createElement("input");
-    input.type = "text";
-    input.value = customPrompt;
-    input.placeholder = "e.g. Make it sound like Hemingway";
-    input.style.cssText = "background:#2d2d2d;color:#fff;border:1px solid #555;border-radius:6px;padding:6px 8px;font-size:12px;outline:none;";
-
-    const saveBtn = document.createElement("button");
-    saveBtn.className = "te-btn";
-    saveBtn.innerHTML = '<span class="te-btn-icon">▶</span><span>Run</span>';
-    saveBtn.addEventListener("mousedown", async (e) => {
+    const backBtn = document.createElement("button");
+    backBtn.className = "te-btn";
+    backBtn.style.cssText = "padding:4px 10px;font-size:12px;width:auto;";
+    backBtn.innerHTML = '<span class="te-btn-icon">←</span><span>Back</span>';
+    backBtn.addEventListener("mousedown", (e) => {
       e.preventDefault();
-      customPrompt = input.value.trim() || customPrompt;
+      m.style.minWidth = "";
+      m.innerHTML = "";
+      // Rebuild menu buttons
+      ACTIONS.forEach(({ label, type, icon }, i) => {
+        const btn = document.createElement("button");
+        btn.className = "te-btn";
+        btn.dataset.type = type;
+        btn.dataset.label = label;
+        const iconEl = document.createElement("span");
+        iconEl.className = "te-btn-icon";
+        iconEl.textContent = icon;
+        const labelEl = document.createElement("span");
+        labelEl.textContent = label;
+        btn.appendChild(iconEl);
+        btn.appendChild(labelEl);
+        if (i === 3) { const div = document.createElement("div"); div.className = "te-divider"; m.appendChild(div); }
+        btn.addEventListener("mousedown", (ev) => { ev.preventDefault(); ev.stopPropagation(); runAction(type); });
+        m.appendChild(btn);
+      });
+    });
+
+    const labelEl = document.createElement("div");
+    labelEl.textContent = "Custom instruction";
+    labelEl.style.cssText = "font-size:11px;color:#aaa;font-weight:500;flex:1;";
+
+    topRow.appendChild(backBtn);
+    topRow.appendChild(labelEl);
+
+    // Textarea (large)
+    const textarea = document.createElement("textarea");
+    textarea.value = customPrompt;
+    textarea.placeholder = "e.g. Make it sound like Hemingway\ne.g. Translate to French\ne.g. Make it more persuasive";
+    textarea.rows = 4;
+    textarea.style.cssText = "background:#2d2d2d;color:#fff;border:1px solid #555;border-radius:6px;padding:8px;font-size:12px;outline:none;resize:vertical;width:100%;box-sizing:border-box;font-family:inherit;line-height:1.5;";
+    textarea.addEventListener("keydown", (e) => e.stopPropagation()); // prevent Ctrl+. etc
+
+    const runBtn = document.createElement("button");
+    runBtn.className = "te-btn";
+    runBtn.innerHTML = '<span class="te-btn-icon">▶</span><span>Run</span>';
+    runBtn.style.cssText = "justify-content:center;background:#0a66c2;color:#fff;border-radius:8px;";
+    runBtn.addEventListener("mousedown", async (e) => {
+      e.preventDefault();
+      customPrompt = textarea.value.trim() || customPrompt;
       try { chrome.storage.local.set({ te_custom_prompt: customPrompt }); } catch (_) {}
       hideMenu();
+      m.style.minWidth = "";
       SYSTEM_MSG.custom = `${customPrompt} The text is in <input> tags. Output ONLY the result, no explanation.`;
       SHOTS.custom = [];
       const text = getText(el).trim();
@@ -711,11 +751,11 @@
       }
     });
 
-    wrapper.appendChild(label);
-    wrapper.appendChild(input);
-    wrapper.appendChild(saveBtn);
+    wrapper.appendChild(topRow);
+    wrapper.appendChild(textarea);
+    wrapper.appendChild(runBtn);
     m.appendChild(wrapper);
-    setTimeout(() => input.focus(), 50);
+    setTimeout(() => textarea.focus(), 50);
   }
 
   // ── Typing detection & auto-suggest ──────────────────────────────────────
