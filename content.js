@@ -15,63 +15,41 @@
     { label: "Friendly",     type: "friendly",     icon: "😊" },
   ];
 
-  const SYSTEM = "";
-
-  // Few-shot chat messages — show the model exactly what to do before the real input
+  // Few-shot chat messages �� 2 examples per action keeps prompt short and inference fast
   const SHOTS = {
     improve: [
       { role: "user",      content: "<input>cant make it tmrw sry</input>" },
       { role: "assistant", content: "I cannot make it tomorrow, sorry." },
       { role: "user",      content: "<input>i wanna ask if u have time to review my work</input>" },
       { role: "assistant", content: "I wanted to ask if you have time to review my work." },
-      { role: "user",      content: "<input>the deadline is tmrw and i havent started this is bad</input>" },
-      { role: "assistant", content: "The deadline is tomorrow and I have not started yet, which is a serious problem." },
     ],
     rewrite: [
       { role: "user",      content: "<input>I am sorry for the late reply I was busy</input>" },
       { role: "assistant", content: "Please accept my apologies for the delayed response; I was occupied with other matters." },
-      { role: "user",      content: "<input>I want to ask if you have time to check my work</input>" },
-      { role: "assistant", content: "I was wondering if you would have time to review my work." },
       { role: "user",      content: "<input>I sent the proposal yesterday did you get a chance to look at it</input>" },
       { role: "assistant", content: "I submitted the proposal yesterday — have you had a chance to review it?" },
-      { role: "user",      content: "<input>I need your help with this task can you assist</input>" },
-      { role: "assistant", content: "I could use your help with this task — would you be able to assist?" },
     ],
     proofread: [
-      { role: "user",      content: "<input>i dont no what happend yesterday</input>" },
-      { role: "assistant", content: "I don't know what happened yesterday." },
       { role: "user",      content: "<input>i recieved ur messege and will get back to u soon as posible</input>" },
       { role: "assistant", content: "I received your message and will get back to you as soon as possible." },
       { role: "user",      content: "<input>their going to there house to pick there stuff</input>" },
       { role: "assistant", content: "They're going to their house to pick up their stuff." },
-      { role: "user",      content: "<input>its a grate opurtunity and i dont want to miss it</input>" },
-      { role: "assistant", content: "It's a great opportunity and I don't want to miss it." },
     ],
     shorten: [
       { role: "user",      content: "<input>I just wanted to let you know that I will not be able to attend the meeting scheduled for tomorrow morning due to a prior commitment</input>" },
       { role: "assistant", content: "I cannot make tomorrow's meeting — prior commitment." },
-      { role: "user",      content: "<input>I wanted to reach out because I have been thinking about our last conversation and I feel like we did not fully address all the points that were raised</input>" },
-      { role: "assistant", content: "I don't think we fully addressed everything in our last conversation." },
       { role: "user",      content: "<input>Could you please let me know at your earliest convenience whether you will be able to complete the task that was assigned to you last week</input>" },
       { role: "assistant", content: "Can you let me know if you can complete last week's task?" },
-      { role: "user",      content: "<input>I sent the document to you earlier today and I was wondering if you had a chance to go through it yet</input>" },
-      { role: "assistant", content: "Did you get a chance to review the document I sent today?" },
     ],
     professional: [
       { role: "user",      content: "<input>hey can u send me that asap</input>" },
       { role: "assistant", content: "Could you please send that at your earliest convenience?" },
-      { role: "user",      content: "<input>i need to talk about my rate its not fair what youre paying me</input>" },
-      { role: "assistant", content: "I would like to discuss my compensation, as I believe a rate adjustment is warranted." },
       { role: "user",      content: "<input>the client rejected the work and wants a refund this is crazy</input>" },
       { role: "assistant", content: "The client has rejected the deliverable and is requesting a refund." },
-      { role: "user",      content: "<input>this is taking way too long and nobody is helping me</input>" },
-      { role: "assistant", content: "The timeline has exceeded expectations and I have not received adequate support." },
     ],
     friendly: [
       { role: "user",      content: "<input>Please submit the report by end of day.</input>" },
       { role: "assistant", content: "Hey, could you send over the report by end of day? Thanks so much!" },
-      { role: "user",      content: "<input>Your invoice has been processed and payment will be made within 30 days.</input>" },
-      { role: "assistant", content: "Good news — your invoice is all set and payment should come through within 30 days!" },
       { role: "user",      content: "<input>We regret to inform you that your application has not been successful.</input>" },
       { role: "assistant", content: "Hey, so sorry to share this — unfortunately your application did not make it through this time." },
     ],
@@ -91,10 +69,10 @@
   let suggest  = null; // auto-suggestion bar
   let focused  = null; // currently focused editable element
 
-  let suggestFor  = null; // element the suggestion targets
-  let suggestText = "";   // suggested replacement text
-  let suggestBusy = false;// request in flight
-  let lastSuggestInput = ""; // last text we suggested for (avoid re-triggering)
+  let suggestFor       = null; // element the suggestion targets
+  let suggestText      = "";   // suggested replacement text
+  let suggestGenId     = 0;    // increments each request — stale responses are dropped
+  let lastSuggestInput = "";   // last text we suggested for (avoid re-triggering)
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -237,16 +215,21 @@
     if (suggest) suggest.style.display = "none";
     suggestFor  = null;
     suggestText = "";
-    suggestBusy = false;
+    suggestGenId++; // invalidate any in-flight request
   }
 
   function applySuggestion() {
     if (suggestFor && suggestText) {
-      setText(suggestFor, suggestText);
-      lastSuggestInput = suggestText; // don't re-suggest the result
-      suggestFor.focus();
+      lastSuggestInput = suggestText; // set BEFORE setText fires the input event
+      clearTimeout(suggestTimer);     // cancel any queued next suggest
+      suggestGenId++;                 // drop any in-flight request
+      const el = suggestFor;
+      hideSuggest();
+      setText(el, lastSuggestInput);
+      el.focus();
+    } else {
+      hideSuggest();
     }
-    hideSuggest();
     hideMenu();
   }
 
@@ -350,7 +333,7 @@
           payload: {
             model: MODEL,
             stream: false,
-            options: { temperature: 0.3, num_predict: 300 },
+            options: { temperature: 0.3, num_predict: 160, num_ctx: 1024 },
             messages: [
               { role: "system", content: SYSTEM_MSG[type] },
               ...SHOTS[type],
@@ -419,28 +402,26 @@
     if (text.length < 4) { hideTrigger(); return; }
     positionTrigger(el);
 
-    // Auto-suggest: fire "improve" after 2s pause, text ≥15 chars, only if changed
-    if (text.length >= 15 && text !== lastSuggestInput && !suggestBusy) {
+    // Auto-suggest: fire "improve" after 1.5s pause, text ≥15 chars, only if changed
+    if (text.length >= 15 && text !== lastSuggestInput) {
       suggestTimer = setTimeout(async () => {
         if (focused !== el) return;
         const current = getText(el).trim();
         if (current.length < 15 || current === lastSuggestInput) return;
-        suggestBusy = true;
+        const myId = ++suggestGenId;
         lastSuggestInput = current;
         showSuggestLoading(el);
         try {
           const result = await callOllama(current, "improve");
-          if (focused === el && result && result !== current) {
+          if (suggestGenId === myId && focused === el && result && result !== current) {
             showSuggestResult(result);
-          } else {
+          } else if (suggestGenId === myId) {
             hideSuggest();
           }
         } catch (_) {
-          hideSuggest();
-        } finally {
-          suggestBusy = false;
+          if (suggestGenId === myId) hideSuggest();
         }
-      }, 2000);
+      }, 1500);
     }
   }
 
