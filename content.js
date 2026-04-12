@@ -106,7 +106,7 @@
     if (!el) return false;
     const id = el.id;
     if (id === "te-trigger" || id === "te-menu" || id === "te-suggest") return false;
-    if (el.closest && el.closest("#te-suggest")) return false;
+    if (el.closest && el.closest("#te-suggest, #te-menu")) return false;
     // On LinkedIn, skip all contentEditable divs — the AI commenter handles those
     if (el.isContentEditable && window.location.hostname.includes("linkedin.com")) return false;
     if (el.isContentEditable) return true;
