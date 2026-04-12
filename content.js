@@ -7,12 +7,12 @@
   const MODEL = "llama3.2";
 
   const ACTIONS = [
-    { label: "Improve",      type: "improve" },
-    { label: "Rewrite",      type: "rewrite" },
-    { label: "Proofread",    type: "proofread" },
-    { label: "Shorten",      type: "shorten" },
-    { label: "Professional", type: "professional" },
-    { label: "Friendly",     type: "friendly" },
+    { label: "Improve",      type: "improve",      icon: "✨" },
+    { label: "Rewrite",      type: "rewrite",      icon: "🔄" },
+    { label: "Proofread",    type: "proofread",    icon: "✅" },
+    { label: "Shorten",      type: "shorten",      icon: "✂️" },
+    { label: "Professional", type: "professional", icon: "💼" },
+    { label: "Friendly",     type: "friendly",     icon: "😊" },
   ];
 
   const SYSTEM = "";
@@ -152,8 +152,8 @@
   function positionTrigger(el) {
     const t = getTrigger();
     const r = el.getBoundingClientRect();
-    const top  = r.bottom + window.scrollY - 28;
-    const left = r.right  + window.scrollX - 28;
+    const top  = r.bottom - 34;
+    const left = r.right  - 34;
     t.style.top  = Math.max(4, top)  + "px";
     t.style.left = Math.max(4, left) + "px";
     t.style.display = "flex";
@@ -171,11 +171,29 @@
     menu = document.createElement("div");
     menu.id = "te-menu";
 
-    ACTIONS.forEach(({ label, type }) => {
+    ACTIONS.forEach(({ label, type, icon }, i) => {
       const btn = document.createElement("button");
       btn.className = "te-btn";
       btn.dataset.type = type;
-      btn.textContent = label;
+      btn.dataset.label = label;
+
+      const iconEl = document.createElement("span");
+      iconEl.className = "te-btn-icon";
+      iconEl.textContent = icon;
+
+      const labelEl = document.createElement("span");
+      labelEl.textContent = label;
+
+      btn.appendChild(iconEl);
+      btn.appendChild(labelEl);
+
+      // divider after Proofread (index 2)
+      if (i === 3) {
+        const div = document.createElement("div");
+        div.className = "te-divider";
+        menu.appendChild(div);
+      }
+
       btn.addEventListener("mousedown", (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -221,9 +239,18 @@
 
   function resetBtns() {
     if (!menu) return;
-    ACTIONS.forEach(({ label, type }) => {
+    ACTIONS.forEach(({ label, type, icon }) => {
       const btn = menu.querySelector(`[data-type="${type}"]`);
-      if (btn) { btn.textContent = label; btn.disabled = false; }
+      if (!btn) return;
+      btn.disabled = false;
+      btn.innerHTML = "";
+      const iconEl = document.createElement("span");
+      iconEl.className = "te-btn-icon";
+      iconEl.textContent = icon;
+      const labelEl = document.createElement("span");
+      labelEl.textContent = label;
+      btn.appendChild(iconEl);
+      btn.appendChild(labelEl);
     });
   }
 
@@ -274,7 +301,7 @@
 
     const btn = menu.querySelector(`[data-type="${type}"]`);
     menu.querySelectorAll(".te-btn").forEach(b => (b.disabled = true));
-    btn.textContent = "...";
+    btn.innerHTML = '<span class="te-btn-icon">⏳</span><span>Working...</span>';
 
     try {
       const result = await callOllama(text, type);
@@ -282,7 +309,8 @@
       hideMenu();
     } catch (err) {
       resetBtns();
-      btn.textContent = err.message;
+      const errBtn = menu.querySelector(`[data-type="${type}"]`);
+      if (errBtn) errBtn.innerHTML = `<span class="te-btn-icon">⚠️</span><span>${err.message}</span>`;
       setTimeout(resetBtns, 2500);
     }
   }
