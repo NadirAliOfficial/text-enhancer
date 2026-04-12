@@ -498,6 +498,54 @@
     });
   }
 
+  // ── Dynamic options based on text size ───────────────────────────────────
+
+  function wordCount(text) {
+    return text.trim().split(/\s+/).filter(Boolean).length;
+  }
+
+  // Returns the right system message — shorten gets a precise word-count target
+  function getSystemMsg(type, text) {
+    if (type === "shorten") {
+      const w = wordCount(text);
+      let target;
+      if (w > 400)      target = "200 to 280 words";
+      else if (w > 200) target = "90 to 130 words";
+      else if (w > 100) target = "45 to 70 words";
+      else if (w > 50)  target = "20 to 35 words";
+      else              target = "about half the current length";
+      return `Shorten the text in <input> tags to approximately ${target}. Keep the core meaning and the speaker's voice. Output ONLY the shortened text, no explanation.`;
+    }
+    return SYSTEM_MSG[type];
+  }
+
+  // Returns Ollama options scaled to the text length so large texts don't fail
+  function getOllamaOptions(type, text) {
+    const chars = text.length;
+    const w     = wordCount(text);
+
+    // Context window: input tokens ≈ chars/3.5, add headroom for system + shots
+    const inputTokens = Math.ceil(chars / 3.5);
+    const num_ctx = Math.min(8192, Math.max(1024, inputTokens + 800));
+
+    // Predict budget: enough tokens for expected output
+    let num_predict;
+    if (type === "shorten") {
+      if (w > 400)      num_predict = 380;
+      else if (w > 200) num_predict = 200;
+      else if (w > 100) num_predict = 110;
+      else              num_predict = 60;
+    } else if (type === "proofread") {
+      num_predict = Math.min(1200, Math.max(160, Math.ceil(w * 1.15)));
+    } else if (["improve", "rewrite", "professional", "friendly"].includes(type)) {
+      num_predict = Math.min(800, Math.max(160, Math.ceil(w * 1.2)));
+    } else {
+      num_predict = 160;
+    }
+
+    return { temperature: 0.3, num_predict, num_ctx, keep_alive: -1 };
+  }
+
   // ── Ollama ────────────────────────────────────────────────────────────────
 
   function callOllama(text, type) {
@@ -508,9 +556,9 @@
           payload: {
             model: MODEL,
             stream: false,
-            options: { temperature: 0.3, num_predict: 160, num_ctx: 1024, keep_alive: -1 },
+            options: getOllamaOptions(type, text),
             messages: [
-              { role: "system", content: SYSTEM_MSG[type] },
+              { role: "system", content: getSystemMsg(type, text) },
               ...SHOTS[type],
               { role: "user", content: `<input>${text}</input>` },
             ],
@@ -621,11 +669,11 @@
     port.postMessage({
       model: MODEL,
       messages: [
-        { role: "system", content: SYSTEM_MSG[type] },
+        { role: "system", content: getSystemMsg(type, text) },
         ...SHOTS[type],
         { role: "user", content: `<input>${text}</input>` },
       ],
-      options: { temperature: 0.3, num_predict: 160, num_ctx: 1024, keep_alive: -1 },
+      options: getOllamaOptions(type, text),
     });
 
     return port;
