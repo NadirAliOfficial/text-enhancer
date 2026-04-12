@@ -4,7 +4,7 @@
   // Don't run inside our own extension pages
   if (window.location.protocol === "chrome-extension:") return;
 
-  const MODEL = "llama3.2:1b";
+  const MODEL = "llama3.2";
 
   const ACTIONS = [
     { label: "Improve",      type: "improve",      icon: "✨" },
