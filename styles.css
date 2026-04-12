@@ -147,3 +147,20 @@
   from { opacity: 0; transform: translateY(5px); }
   to   { opacity: 1; transform: translateY(0);   }
 }
+
+/* ── Diff highlight ──────────────────────────────────────────────────────── */
+
+#te-suggest-text mark {
+  background: rgba(10, 102, 194, 0.18);
+  color: #7ab3e0;
+  border-radius: 2px;
+  padding: 0 1px;
+  font-weight: 500;
+}
+
+/* ── Custom prompt input ─────────────────────────────────────────────────── */
+
+#te-menu input[type="text"] {
+  width: 100%;
+  box-sizing: border-box;
+}

@@ -13,6 +13,8 @@
     { label: "Shorten",      type: "shorten",      icon: "✂️" },
     { label: "Professional", type: "professional", icon: "💼" },
     { label: "Friendly",     type: "friendly",     icon: "😊" },
+    { label: "Translate",    type: "translate",    icon: "🌐" },
+    { label: "Custom",       type: "custom",       icon: "⚙️" },
   ];
 
   // Few-shot chat messages �� 2 examples per action keeps prompt short and inference fast
@@ -53,7 +55,20 @@
       { role: "user",      content: "<input>We regret to inform you that your application has not been successful.</input>" },
       { role: "assistant", content: "Hey, so sorry to share this — unfortunately your application did not make it through this time." },
     ],
+    translate: [
+      { role: "user",      content: "<input>Bonjour, comment puis-je vous aider aujourd'hui?</input>" },
+      { role: "assistant", content: "Hello, how can I help you today?" },
+      { role: "user",      content: "<input>Hello, I would like to schedule a meeting for next week.</input>" },
+      { role: "assistant", content: "Hola, me gustaría programar una reunión para la próxima semana." },
+    ],
   };
+
+  let customPrompt = "Make this text more concise and impactful.";
+  try { chrome.storage.local.get("te_custom_prompt", r => { if (r.te_custom_prompt) customPrompt = r.te_custom_prompt; }); } catch (_) {}
+
+  // SHOTS for dynamic types (empty — no few-shot needed for translate/custom)
+  SHOTS.translate = SHOTS.translate || [];
+  SHOTS.custom    = [];
 
   const SYSTEM_MSG = {
     improve:      "Rewrite the text in <input> tags with better clarity and grammar. Output ONLY the result, same meaning and perspective, no explanation.",
@@ -62,6 +77,8 @@
     shorten:      "Shorten the text in <input> tags, keep core meaning and speaker. Output ONLY the result, no explanation.",
     professional: "Make the text in <input> tags formal and professional. Output ONLY the result, same perspective, no added content.",
     friendly:     "Make the text in <input> tags warm and casual. Output ONLY the result, same perspective, no explanation.",
+    translate:    "Detect the language of the text in <input> tags. If it is not English, translate it to English. If it is already English, translate it to Spanish. Output ONLY the translation, no explanation.",
+    custom:       "", // filled dynamically from customPrompt
   };
 
   let trigger  = null; // small floating ✦ button
@@ -74,9 +91,14 @@
   let suggestGenId     = 0;     // increments each request — stale responses are dropped
   let lastSuggestInput = "";    // last text we suggested for (avoid re-triggering)
   let streamPort       = null;  // active streaming port (disconnect to cancel)
-  let pendingUndo      = null;  // { el, original } — set when in undo state
+  let undoStack        = [];    // multi-level undo: [{el, text}, ...] max 5
   let suggestDragged   = false; // true after user drags the bar — skip auto-reposition
   let triggerDragged   = false; // true after user drags the trigger — skip auto-reposition
+  let originalForDiff  = "";    // text before suggestion — for diff view
+  let siteUsage        = {};    // per-site action usage counts {hostname: {type: count}}
+
+  // Load per-site usage from storage
+  try { chrome.storage.local.get("te_site_usage", r => { if (r.te_site_usage) siteUsage = r.te_site_usage; }); } catch (_) {}
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -204,13 +226,16 @@
     accept.addEventListener("mousedown", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      if (pendingUndo) {
-        const { el, original } = pendingUndo;
-        pendingUndo = null;
+      if (accept.classList.contains("undo") && undoStack.length) {
+        const { el, text: original } = undoStack.pop();
         setText(el, original);
         lastSuggestInput = original;
         el.focus();
-        hideSuggest();
+        if (undoStack.length) {
+          updateUndoBtn(accept);
+        } else {
+          hideSuggest();
+        }
       } else {
         applySuggestion();
       }
@@ -280,22 +305,46 @@
     s.style.display  = "flex";
   }
 
+  function wordDiffHtml(original, updated) {
+    const a = original.split(/\s+/);
+    const b = updated.split(/\s+/);
+    const setA = new Set(a);
+    const setB = new Set(b);
+    return b.map(w => setA.has(w) ? w : `<mark>${w}</mark>`).join(" ");
+  }
+
   function showSuggestResult(text) {
     if (!suggest || suggest.style.display === "none") return;
     suggestText = text;
-    suggest.querySelector("#te-suggest-text").textContent = text;
+    const textEl = suggest.querySelector("#te-suggest-text");
+    if (originalForDiff && text.length > 5) {
+      textEl.innerHTML = wordDiffHtml(originalForDiff, text);
+    } else {
+      textEl.textContent = text;
+    }
     suggest.querySelector("#te-suggest-accept").style.display = "";
   }
 
   function hideSuggest() {
     streamPort?.disconnect();
     streamPort     = null;
-    pendingUndo    = null;
     suggestDragged = false;
-    if (suggest) suggest.style.display = "none";
+    if (suggest) {
+      suggest.style.display = "none";
+      const accept = suggest.querySelector("#te-suggest-accept");
+      if (accept) { accept.classList.remove("undo"); accept.style.background = ""; }
+    }
     suggestFor  = null;
     suggestText = "";
     suggestGenId++;
+  }
+
+  function updateUndoBtn(accept) {
+    const levels = undoStack.length;
+    accept.textContent      = levels > 1 ? `Undo (${levels})` : "Undo";
+    accept.style.background = "#333";
+    accept.classList.add("undo");
+    accept.style.display    = "";
   }
 
   function showUndoState(el, original) {
@@ -304,10 +353,7 @@
     s.querySelector("#te-suggest-label").textContent = "✓";
     s.querySelector("#te-suggest-text").textContent  = "Applied";
     const accept = s.querySelector("#te-suggest-accept");
-    accept.textContent      = "Undo";
-    accept.style.background = "#333";
-    accept.style.display    = "";
-    pendingUndo = { el, original };
+    updateUndoBtn(accept);
     s.querySelector("#te-suggest-dismiss").textContent = "✕";
     if (!suggestDragged) {
       const r = el.getBoundingClientRect();
@@ -315,23 +361,27 @@
       s.style.left = Math.max(8, r.left) + "px";
     }
     s.style.display = "flex";
-    setTimeout(() => { hideSuggest(); }, 4000);
+    setTimeout(() => { if (!undoStack.length) hideSuggest(); }, 5000);
   }
 
   function applySuggestion() {
     if (suggestFor && suggestText) {
-      const el       = suggestFor;
-      const original = getText(el).trim();
+      const el          = suggestFor;
+      const original    = getText(el).trim();
       const replacement = suggestText;
-      lastSuggestInput = replacement;
+      lastSuggestInput  = replacement;
       clearTimeout(suggestTimer);
       suggestGenId++;
       streamPort?.disconnect(); streamPort = null;
       suggestFor  = null;
       suggestText = "";
+      // Push to undo stack
+      undoStack.push({ el, text: original });
+      if (undoStack.length > 5) undoStack.shift();
       setText(el, replacement);
       el.focus();
       hideMenu();
+      trackUsage("auto");
       showUndoState(el, original);
     } else {
       hideSuggest();
@@ -390,8 +440,27 @@
     }
   }
 
+  function reorderMenuByUsage() {
+    if (!menu) return;
+    const host  = window.location.hostname;
+    const usage = siteUsage[host] || {};
+    const btns  = [...menu.querySelectorAll(".te-btn[data-type]")];
+    const divider = menu.querySelector(".te-divider");
+    // Sort by usage desc, keep custom + translate at bottom
+    const pinned = ["translate", "custom"];
+    const sorted = btns
+      .filter(b => !pinned.includes(b.dataset.type))
+      .sort((a, b) => (usage[b.dataset.type] || 0) - (usage[a.dataset.type] || 0));
+    const pinnedBtns = btns.filter(b => pinned.includes(b.dataset.type));
+    // Re-append in sorted order
+    sorted.forEach(b => menu.appendChild(b));
+    if (divider) menu.appendChild(divider);
+    pinnedBtns.forEach(b => menu.appendChild(b));
+  }
+
   function showMenu() {
     const m = getMenu();
+    reorderMenuByUsage();
     const t = getTrigger();
     const tr = t.getBoundingClientRect();
     m.style.display = "flex";
@@ -569,20 +638,84 @@
     const text = getText(el).trim();
     if (!text) { hideMenu(); return; }
 
+    // Custom action: show prompt input inline
+    if (type === "custom") {
+      showCustomPromptInput(el);
+      return;
+    }
+
     const btn = menu.querySelector(`[data-type="${type}"]`);
     menu.querySelectorAll(".te-btn").forEach(b => (b.disabled = true));
     btn.innerHTML = '<span class="te-btn-icon">⏳</span><span>Working...</span>';
 
+    // Set custom system message dynamically
+    if (type === "custom") SYSTEM_MSG.custom = `${customPrompt} The text is in <input> tags. Output ONLY the result, no explanation.`;
+
     try {
       const result = await callOllama(text, type);
+      // Push to undo stack before replacing
+      undoStack.push({ el, text });
+      if (undoStack.length > 5) undoStack.shift();
       setText(el, result);
       hideMenu();
+      trackUsage(type);
     } catch (err) {
       resetBtns();
       const errBtn = menu.querySelector(`[data-type="${type}"]`);
       if (errBtn) errBtn.innerHTML = `<span class="te-btn-icon">⚠️</span><span>${err.message}</span>`;
       setTimeout(resetBtns, 2500);
     }
+  }
+
+  function trackUsage(type) {
+    const host = window.location.hostname;
+    if (!siteUsage[host]) siteUsage[host] = {};
+    siteUsage[host][type] = (siteUsage[host][type] || 0) + 1;
+    try { chrome.storage.local.set({ te_site_usage: siteUsage }); } catch (_) {}
+  }
+
+  function showCustomPromptInput(el) {
+    const m = getMenu();
+    m.innerHTML = "";
+    const wrapper = document.createElement("div");
+    wrapper.style.cssText = "padding:8px;display:flex;flex-direction:column;gap:6px;";
+
+    const label = document.createElement("div");
+    label.textContent = "Custom instruction:";
+    label.style.cssText = "font-size:11px;color:#aaa;";
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = customPrompt;
+    input.placeholder = "e.g. Make it sound like Hemingway";
+    input.style.cssText = "background:#2d2d2d;color:#fff;border:1px solid #555;border-radius:6px;padding:6px 8px;font-size:12px;outline:none;";
+
+    const saveBtn = document.createElement("button");
+    saveBtn.className = "te-btn";
+    saveBtn.innerHTML = '<span class="te-btn-icon">▶</span><span>Run</span>';
+    saveBtn.addEventListener("mousedown", async (e) => {
+      e.preventDefault();
+      customPrompt = input.value.trim() || customPrompt;
+      try { chrome.storage.local.set({ te_custom_prompt: customPrompt }); } catch (_) {}
+      hideMenu();
+      SYSTEM_MSG.custom = `${customPrompt} The text is in <input> tags. Output ONLY the result, no explanation.`;
+      SHOTS.custom = [];
+      const text = getText(el).trim();
+      if (!text) return;
+      const result = await callOllama(text, "custom").catch(() => null);
+      if (result) {
+        undoStack.push({ el, text });
+        if (undoStack.length > 5) undoStack.shift();
+        setText(el, result);
+        trackUsage("custom");
+      }
+    });
+
+    wrapper.appendChild(label);
+    wrapper.appendChild(input);
+    wrapper.appendChild(saveBtn);
+    m.appendChild(wrapper);
+    setTimeout(() => input.focus(), 50);
   }
 
   // ── Typing detection & auto-suggest ──────────────────────────────────────
@@ -613,6 +746,7 @@
         const myId   = ++suggestGenId;
         const action = pickAction(current);
         lastSuggestInput = current;
+        originalForDiff  = current;
         showSuggestLoading(el, action);
 
         streamPort?.disconnect();
