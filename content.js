@@ -74,6 +74,7 @@
   let suggestGenId     = 0;    // increments each request — stale responses are dropped
   let lastSuggestInput = "";   // last text we suggested for (avoid re-triggering)
   let streamPort       = null; // active streaming port (disconnect to cancel)
+  let pendingUndo      = null; // { el, original } — set when in undo state
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -95,7 +96,7 @@
   function getText(el) {
     if (!el) return "";
     const raw = el.isContentEditable ? (el.innerText || el.textContent || "") : (el.value || "");
-    return raw.replace(/<\/?input>/gi, ""); // strip any echoed tags before processing
+    return raw.replace(/<[^>]+>/g, ""); // strip any echoed HTML/XML tags
   }
 
   function setText(el, newText) {
@@ -169,7 +170,20 @@
     const accept = document.createElement("button");
     accept.id = "te-suggest-accept";
     accept.textContent = "Accept (Tab)";
-    accept.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); applySuggestion(); });
+    accept.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (pendingUndo) {
+        const { el, original } = pendingUndo;
+        pendingUndo = null;
+        setText(el, original);
+        lastSuggestInput = original;
+        el.focus();
+        hideSuggest();
+      } else {
+        applySuggestion();
+      }
+    });
 
     const dismiss = document.createElement("button");
     dismiss.id = "te-suggest-dismiss";
@@ -220,7 +234,8 @@
 
   function hideSuggest() {
     streamPort?.disconnect();
-    streamPort = null;
+    streamPort  = null;
+    pendingUndo = null;
     if (suggest) suggest.style.display = "none";
     suggestFor  = null;
     suggestText = "";
@@ -235,19 +250,13 @@
     accept.textContent = "Undo";
     accept.style.background = "#333";
     accept.style.display = "";
-    accept.onclick = () => {
-      setText(el, original);
-      lastSuggestInput = original;
-      el.focus();
-      hideSuggest();
-      accept.onclick = null;
-    };
+    pendingUndo = { el, original };
     s.querySelector("#te-suggest-dismiss").textContent = "✕";
     const r = el.getBoundingClientRect();
     s.style.top     = (r.bottom + 6) + "px";
     s.style.left    = Math.max(8, r.left) + "px";
     s.style.display = "flex";
-    setTimeout(() => { hideSuggest(); accept.onclick = null; }, 4000);
+    setTimeout(() => { hideSuggest(); }, 4000);
   }
 
   function applySuggestion() {
@@ -391,7 +400,7 @@
 
   function clean(text) {
     return text
-      .replace(/<\/?input>/gi, "")                                                          // strip echoed XML tags
+      .replace(/<[^>]+>/g, "")                                                              // strip any HTML/XML tags the model echoes
       .replace(/^["'\u201C\u201D]|["'\u201C\u201D]$/g, "")
       .replace(/^(Text:|Result:|Output:)\s*/i, "")
       .replace(/^(Here(?:'s| is)[^:\n]*[:—]\s*)/i, "")
@@ -403,7 +412,7 @@
   // Same as clean() but trims only the left (for live stream preview)
   function cleanLeft(text) {
     return text
-      .replace(/<\/?input>/gi, "")                                                          // strip echoed XML tags
+      .replace(/<[^>]+>/g, "")                                                              // strip any HTML/XML tags the model echoes
       .replace(/^["'\u201C\u201D]/, "")
       .replace(/^(Text:|Result:|Output:)\s*/i, "")
       .replace(/^(Here(?:'s| is)[^:\n]*[:—]\s*)/i, "")
@@ -526,12 +535,12 @@
     if (text.length < 4) { hideTrigger(); return; }
     positionTrigger(el);
 
-    // Auto-suggest: stream "improve" after 1.5s pause, text ≥15 chars, only if changed
-    if (text.length >= 15 && text !== lastSuggestInput) {
+    // Auto-suggest: stream after 1.5s pause, text ≥8 chars, only if changed
+    if (text.length >= 8 && text !== lastSuggestInput) {
       suggestTimer = setTimeout(() => {
         if (focused !== el) return;
         const current = getText(el).trim();
-        if (current.length < 15 || current === lastSuggestInput) return;
+        if (current.length < 8 || current === lastSuggestInput) return;
 
         const myId   = ++suggestGenId;
         const action = pickAction(current);
