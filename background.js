@@ -1,4 +1,6 @@
-// Per-tab AbortControllers for non-streaming requests
+importScripts("config.js");
+const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
+
 const controllers = new Map();
 
 // ── Non-streaming (manual actions) ───────────────────────────────────────────
@@ -11,14 +13,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const ctrl = new AbortController();
   controllers.set(tabId, ctrl);
 
-  fetch("http://localhost:11434/api/chat", {
+  const { messages, options = {} } = message.payload;
+  const body = {
+    model: "llama-3.3-70b-versatile",
+    messages,
+    temperature: options.temperature ?? 0.3,
+    ...(options.num_predict && options.num_predict > 0 ? { max_tokens: options.num_predict } : {}),
+    stream: false,
+  };
+
+  fetch(GROQ_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(message.payload),
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer " + GROQ_API_KEY,
+    },
+    body: JSON.stringify(body),
     signal: ctrl.signal,
   })
-    .then(r => { if (!r.ok) throw new Error("Ollama " + r.status); return r.json(); })
-    .then(data => { controllers.delete(tabId); sendResponse({ ok: true, text: data.message?.content || "" }); })
+    .then(r => { if (!r.ok) throw new Error("Groq " + r.status); return r.json(); })
+    .then(data => {
+      controllers.delete(tabId);
+      sendResponse({ ok: true, text: data.choices?.[0]?.message?.content || "" });
+    })
     .catch(err => {
       controllers.delete(tabId);
       if (err.name === "AbortError") return;
@@ -38,15 +55,27 @@ chrome.runtime.onConnect.addListener((port) => {
     ctrl?.abort();
     ctrl = new AbortController();
 
+    const { messages, options = {} } = payload;
+    const body = {
+      model: "llama-3.3-70b-versatile",
+      messages,
+      temperature: options.temperature ?? 0.3,
+      ...(options.num_predict && options.num_predict > 0 ? { max_tokens: options.num_predict } : {}),
+      stream: true,
+    };
+
     try {
-      const resp = await fetch("http://localhost:11434/api/chat", {
+      const resp = await fetch(GROQ_URL, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...payload, stream: true }),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer " + GROQ_API_KEY,
+        },
+        body: JSON.stringify(body),
         signal: ctrl.signal,
       });
 
-      if (!resp.ok) { port.postMessage({ error: "Ollama " + resp.status }); return; }
+      if (!resp.ok) { port.postMessage({ error: "Groq " + resp.status }); return; }
 
       const reader = resp.body.getReader();
       const dec    = new TextDecoder();
@@ -59,11 +88,15 @@ chrome.runtime.onConnect.addListener((port) => {
         const lines = buf.split("\n");
         buf = lines.pop();
         for (const line of lines) {
-          if (!line.trim()) continue;
+          const trimmed = line.replace(/^data:\s*/, "").trim();
+          if (!trimmed || trimmed === "[DONE]") {
+            if (trimmed === "[DONE]") { port.postMessage({ done: true }); return; }
+            continue;
+          }
           try {
-            const d = JSON.parse(line);
-            if (d.message?.content) port.postMessage({ token: d.message.content });
-            if (d.done) { port.postMessage({ done: true }); return; }
+            const d = JSON.parse(trimmed);
+            const token = d.choices?.[0]?.delta?.content;
+            if (token) port.postMessage({ token });
           } catch (_) {}
         }
       }
@@ -74,15 +107,3 @@ chrome.runtime.onConnect.addListener((port) => {
 
   port.onDisconnect.addListener(() => ctrl?.abort());
 });
-
-// ── Warmup: load model into memory immediately ────────────────────────────────
-fetch("http://localhost:11434/api/chat", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    model: "llama3.2",
-    stream: false,
-    messages: [{ role: "user", content: "." }],
-    options: { num_predict: 1, num_ctx: 256, keep_alive: -1 },
-  }),
-}).catch(() => {});

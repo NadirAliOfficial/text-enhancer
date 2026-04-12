@@ -2,3 +2,5 @@
 *.zip
 *.crx
 node_modules/
+config.js
+.env

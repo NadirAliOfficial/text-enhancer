@@ -9,7 +9,7 @@
   "host_permissions": [
     "http://*/*",
     "https://*/*",
-    "http://localhost:11434/*"
+    "https://api.groq.com/*"
   ],
 
   "content_scripts": [

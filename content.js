@@ -4,7 +4,7 @@
   // Don't run inside our own extension pages
   if (window.location.protocol === "chrome-extension:") return;
 
-  const MODEL = "llama3.2";
+  const MODEL = "llama-3.3-70b-versatile";
 
   const ACTIONS = [
     { label: "Improve",      type: "improve",      icon: "✨" },
@@ -71,13 +71,13 @@
   SHOTS.custom    = [];
 
   const SYSTEM_MSG = {
-    improve:      "Rewrite the text in <input> tags with better clarity and grammar. Output ONLY the result, same meaning and perspective, no explanation.",
-    rewrite:      "Rephrase the text in <input> tags. Output ONLY the result, same meaning and speaker perspective, no explanation.",
-    proofread:    "Fix all grammar and spelling in the text in <input> tags. Output ONLY the corrected text, no explanation.",
-    shorten:      "Shorten the text in <input> tags, keep core meaning and speaker. Output ONLY the result, no explanation.",
-    professional: "Make the text in <input> tags formal and professional. Output ONLY the result, same perspective, no added content.",
-    friendly:     "Make the text in <input> tags warm and casual. Output ONLY the result, same perspective, no explanation.",
-    translate:    "Detect the language of the text in <input> tags. If it is not English, translate it to English. If it is already English, translate it to Spanish. Output ONLY the translation, no explanation.",
+    improve:      "Improve the clarity, grammar, and flow of the text in <input> tags. Keep the same meaning, tone, length, and speaker perspective. Output ONLY the improved text. Do NOT include <input> tags or any explanation.",
+    rewrite:      "Rephrase the text in <input> tags using different wording. Keep the same meaning, length, and speaker perspective. Output ONLY the rewritten text. Do NOT include <input> tags or any explanation.",
+    proofread:    "Fix all grammar, spelling, and punctuation in the text in <input> tags. Do not change wording or style. Output ONLY the corrected text without <input> tags and without any explanation.",
+    shorten:      "Shorten the text in <input> tags. Keep the core meaning and speaker's voice. Output ONLY the shortened text. Do NOT include <input> tags or any explanation.",
+    professional: "Rewrite the text in <input> tags to sound formal and professional. Keep the same meaning, the same number of sentences, and the same length — do not add new sentences or new content. Output ONLY the rewritten text. Do NOT include <input> tags or any explanation.",
+    friendly:     "Rewrite the text in <input> tags to sound warm and conversational. Keep the same meaning, the same number of sentences, and the same length — do not add new sentences or new content. Output ONLY the rewritten text. Do NOT include <input> tags or any explanation.",
+    translate:    "Detect the language of the text in <input> tags. If it is not English, translate it to English. If it is already English, translate it to Spanish. Output ONLY the translation without <input> tags and without any explanation.",
     custom:       "", // filled dynamically from customPrompt
   };
 
@@ -524,23 +524,20 @@
     const chars = text.length;
     const w     = wordCount(text);
 
-    // Context window: input tokens ≈ chars/3.5, add headroom for system + shots
+    // Context window: input tokens ≈ chars/3.5, add headroom for system + shots + output
     const inputTokens = Math.ceil(chars / 3.5);
-    const num_ctx = Math.min(8192, Math.max(1024, inputTokens + 800));
+    const num_ctx = Math.min(32768, Math.max(2048, inputTokens * 2 + 1200));
 
-    // Predict budget: enough tokens for expected output
+    // num_predict: -1 = unlimited (model stops when done naturally).
+    // Only shorten gets a ceiling since output is intentionally smaller than input.
     let num_predict;
     if (type === "shorten") {
-      if (w > 400)      num_predict = 380;
-      else if (w > 200) num_predict = 200;
-      else if (w > 100) num_predict = 110;
-      else              num_predict = 60;
-    } else if (type === "proofread") {
-      num_predict = Math.min(1200, Math.max(160, Math.ceil(w * 1.15)));
-    } else if (["improve", "rewrite", "professional", "friendly"].includes(type)) {
-      num_predict = Math.min(800, Math.max(160, Math.ceil(w * 1.2)));
+      if (w > 400)      num_predict = 500;
+      else if (w > 200) num_predict = 280;
+      else if (w > 100) num_predict = 150;
+      else              num_predict = 80;
     } else {
-      num_predict = 160;
+      num_predict = -1;
     }
 
     return { temperature: 0.3, num_predict, num_ctx, keep_alive: -1 };
