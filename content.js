@@ -88,18 +88,27 @@
 
   let trigger  = null; // small floating ✦ button
   let menu     = null; // action menu panel
+  let suggest  = null; // auto-suggestion bar
   let focused  = null; // currently focused editable element
+
+  let suggestFor  = null; // element the suggestion targets
+  let suggestText = "";   // suggested replacement text
+  let suggestBusy = false;// request in flight
+  let lastSuggestInput = ""; // last text we suggested for (avoid re-triggering)
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   function isEditable(el) {
-    if (!el || el.id === "te-trigger" || el.id === "te-menu") return false;
+    if (!el) return false;
+    const id = el.id;
+    if (id === "te-trigger" || id === "te-menu" || id === "te-suggest") return false;
+    if (el.closest && el.closest("#te-suggest")) return false;
     if (el.isContentEditable) return true;
     const tag = el.tagName;
     if (tag === "TEXTAREA") return true;
     if (tag === "INPUT") {
       const t = (el.type || "text").toLowerCase();
-      return ["text","search","email","url","tel","password",""].includes(t);
+      return ["text","search","email","url","tel",""].includes(t); // no password
     }
     return false;
   }
@@ -161,6 +170,83 @@
 
   function hideTrigger() {
     if (trigger) trigger.style.display = "none";
+    hideMenu();
+  }
+
+  // ── Suggestion bar ────────────────────────────────────────────────────────
+
+  function getSuggest() {
+    if (suggest) return suggest;
+    suggest = document.createElement("div");
+    suggest.id = "te-suggest";
+
+    const label = document.createElement("span");
+    label.id = "te-suggest-label";
+    label.textContent = "✨";
+
+    const textEl = document.createElement("span");
+    textEl.id = "te-suggest-text";
+
+    const accept = document.createElement("button");
+    accept.id = "te-suggest-accept";
+    accept.textContent = "Accept (Tab)";
+    accept.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); applySuggestion(); });
+
+    const dismiss = document.createElement("button");
+    dismiss.id = "te-suggest-dismiss";
+    dismiss.textContent = "✕";
+    dismiss.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); hideSuggest(); });
+
+    suggest.appendChild(label);
+    suggest.appendChild(textEl);
+    suggest.appendChild(accept);
+    suggest.appendChild(dismiss);
+    document.documentElement.appendChild(suggest);
+    return suggest;
+  }
+
+  function positionSuggest(el) {
+    if (!suggest || suggest.style.display === "none") return;
+    const r = el.getBoundingClientRect();
+    const s = suggest;
+    s.style.top  = (r.bottom + 6) + "px";
+    s.style.left = Math.max(8, r.left) + "px";
+    s.style.maxWidth = Math.min(520, window.innerWidth - Math.max(8, r.left) - 12) + "px";
+  }
+
+  function showSuggestLoading(el) {
+    suggestFor = el;
+    const s = getSuggest();
+    s.querySelector("#te-suggest-text").textContent = "Analyzing…";
+    s.querySelector("#te-suggest-accept").style.display = "none";
+    const r = el.getBoundingClientRect();
+    s.style.top  = (r.bottom + 6) + "px";
+    s.style.left = Math.max(8, r.left) + "px";
+    s.style.maxWidth = Math.min(520, window.innerWidth - Math.max(8, r.left) - 12) + "px";
+    s.style.display = "flex";
+  }
+
+  function showSuggestResult(text) {
+    if (!suggest || suggest.style.display === "none") return;
+    suggestText = text;
+    suggest.querySelector("#te-suggest-text").textContent = text;
+    suggest.querySelector("#te-suggest-accept").style.display = "";
+  }
+
+  function hideSuggest() {
+    if (suggest) suggest.style.display = "none";
+    suggestFor  = null;
+    suggestText = "";
+    suggestBusy = false;
+  }
+
+  function applySuggestion() {
+    if (suggestFor && suggestText) {
+      setText(suggestFor, suggestText);
+      lastSuggestInput = suggestText; // don't re-suggest the result
+      suggestFor.focus();
+    }
+    hideSuggest();
     hideMenu();
   }
 
@@ -315,27 +401,58 @@
     }
   }
 
-  // ── Auto-show after typing stops ─────────────────────────────────────────
+  // ── Typing detection & auto-suggest ──────────────────────────────────────
 
-  let typingTimer = null;
+  let typingTimer  = null;
+  let suggestTimer = null;
+
+  function handleTyping(el) {
+    if (!isEditable(el)) return;
+    focused = el;
+
+    clearTimeout(typingTimer);
+    clearTimeout(suggestTimer);
+    hideMenu();
+    hideSuggest();
+
+    const text = getText(el).trim();
+    if (text.length < 4) { hideTrigger(); return; }
+    positionTrigger(el);
+
+    // Auto-suggest: fire "improve" after 2s pause, text ≥15 chars, only if changed
+    if (text.length >= 15 && text !== lastSuggestInput && !suggestBusy) {
+      suggestTimer = setTimeout(async () => {
+        if (focused !== el) return;
+        const current = getText(el).trim();
+        if (current.length < 15 || current === lastSuggestInput) return;
+        suggestBusy = true;
+        lastSuggestInput = current;
+        showSuggestLoading(el);
+        try {
+          const result = await callOllama(current, "improve");
+          if (focused === el && result && result !== current) {
+            showSuggestResult(result);
+          } else {
+            hideSuggest();
+          }
+        } catch (_) {
+          hideSuggest();
+        } finally {
+          suggestBusy = false;
+        }
+      }, 2000);
+    }
+  }
 
   function onInput(e) {
     if (!isEditable(e.target)) return;
-    focused = e.target;
-    clearTimeout(typingTimer);
-    hideMenu(); // hide while typing
-    const text = getText(e.target).trim();
-    if (text.length < 4) { hideTrigger(); return; }
-    positionTrigger(e.target);
-    // Auto-show menu 900ms after user stops typing
-    typingTimer = setTimeout(() => {
-      if (focused === e.target && getText(e.target).trim().length >= 4) {
-        showMenu();
-      }
-    }, 900);
+    handleTyping(e.target);
   }
 
-  document.addEventListener("input", onInput);
+  // listen on input + paste + compositionend for full coverage
+  document.addEventListener("input",          onInput);
+  document.addEventListener("paste",          (e) => setTimeout(() => onInput(e), 50));
+  document.addEventListener("compositionend", onInput);
 
   document.addEventListener("focusin", (e) => {
     if (!isEditable(e.target)) return;
@@ -348,26 +465,44 @@
     setTimeout(() => {
       const active = document.activeElement;
       if (
-        (trigger && trigger.contains(active)) ||
-        (menu    && menu.contains(active))    ||
+        (trigger  && trigger.contains(active))  ||
+        (menu     && menu.contains(active))     ||
+        (suggest  && suggest.contains(active))  ||
         isEditable(active)
       ) return;
       hideTrigger();
+      hideSuggest();
+      clearTimeout(suggestTimer);
       focused = null;
     }, 200);
   });
 
-  window.addEventListener("scroll", () => { if (focused) positionTrigger(focused); }, { passive: true });
-  window.addEventListener("resize", () => { if (focused) positionTrigger(focused); }, { passive: true });
+  window.addEventListener("scroll", () => {
+    if (focused) { positionTrigger(focused); positionSuggest(focused); }
+  }, { passive: true });
+
+  window.addEventListener("resize", () => {
+    if (focused) { positionTrigger(focused); positionSuggest(focused); }
+  }, { passive: true });
 
   document.addEventListener("mousedown", (e) => {
     if (trigger && trigger.contains(e.target)) return;
     if (menu    && menu.contains(e.target))    return;
+    if (suggest && suggest.contains(e.target)) return;
     hideMenu();
   });
 
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") { hideMenu(); clearTimeout(typingTimer); }
+    if (e.key === "Escape") {
+      hideMenu();
+      hideSuggest();
+      clearTimeout(typingTimer);
+      clearTimeout(suggestTimer);
+    }
+    if (e.key === "Tab" && suggest && suggest.style.display !== "none" && suggestText) {
+      e.preventDefault();
+      applySuggestion();
+    }
   });
 
 })();

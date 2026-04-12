@@ -70,3 +70,71 @@
   background: #2a2a2a;
   margin: 3px 4px;
 }
+
+/* ── Auto-suggest bar ─────────────���─────────────────────────────────────── */
+
+#te-suggest {
+  position: fixed;
+  z-index: 2147483647;
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #1e1e1e;
+  border: 1px solid #0a66c2;
+  border-radius: 10px;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.45);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  animation: te-fadein 0.18s ease;
+}
+
+#te-suggest-label {
+  font-size: 15px;
+  flex-shrink: 0;
+}
+
+#te-suggest-text {
+  flex: 1;
+  font-size: 13px;
+  color: #d4d4d4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+#te-suggest-accept {
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  background: #0a66c2;
+  color: #fff;
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background 0.1s;
+}
+
+#te-suggest-accept:hover { background: #004182; }
+
+#te-suggest-dismiss {
+  padding: 3px 7px;
+  font-size: 14px;
+  background: transparent;
+  color: #666;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.1s;
+  line-height: 1;
+}
+
+#te-suggest-dismiss:hover { color: #ccc; }
+
+@keyframes te-fadein {
+  from { opacity: 0; transform: translateY(5px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
