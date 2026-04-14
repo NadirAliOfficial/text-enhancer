@@ -98,9 +98,14 @@
   let triggerDragged   = false; // true after user drags the trigger — skip auto-reposition
   let originalForDiff  = "";    // text before suggestion — for diff view
   let siteUsage        = {};    // per-site action usage counts {hostname: {type: count}}
+  let templates        = [];    // saved reply templates [{label, text}]
+  let awayMode         = false; // auto-generate holding reply when new message arrives
+  let responseTimerInt = null;  // setInterval for the waiting-time badge on SR button
+  let followUpTimer    = null;  // setTimeout for follow-up reminder
 
-  // Load per-site usage from storage
+  // Load per-site usage + templates from storage
   try { chrome.storage.local.get("te_site_usage", r => { if (r.te_site_usage) siteUsage = r.te_site_usage; }); } catch (_) {}
+  try { chrome.storage.local.get("te_templates",  r => { if (r.te_templates)  templates = r.te_templates;  }); } catch (_) {}
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -205,16 +210,129 @@
       cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,0.35);
       user-select:none;border:1px solid #444;transition:background 0.15s;
     `;
-    srBtn.addEventListener("mouseenter", () => { srBtn.style.background = "#2d2d2d"; });
-    srBtn.addEventListener("mouseleave", () => { srBtn.style.background = "#1e1e1e"; });
+    srBtn.addEventListener("mouseenter", () => { if (!awayMode) srBtn.style.background = "#2d2d2d"; });
+    srBtn.addEventListener("mouseleave", () => { if (!awayMode) srBtn.style.background = "#1e1e1e"; });
     srBtn.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
     srBtn.addEventListener("click", (e) => {
       e.preventDefault(); e.stopPropagation();
       hideMenu();
       runSmartReply(focused || lastFocused);
     });
+    // Right-click / long-press context menu
+    srBtn.addEventListener("contextmenu", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      showSrContextMenu(e.clientX, e.clientY);
+    });
     document.documentElement.appendChild(srBtn);
     return srBtn;
+  }
+
+  function showSrContextMenu(x, y) {
+    const existing = document.getElementById("te-sr-ctx");
+    if (existing) existing.remove();
+    const el = focused || lastFocused;
+    const ctx = document.createElement("div");
+    ctx.id = "te-sr-ctx";
+    ctx.style.cssText = `position:fixed;left:${x}px;top:${y}px;
+      background:#1e1e1e;border:1px solid #444;border-radius:8px;
+      z-index:2147483647;font-size:13px;color:#e0e0e0;overflow:hidden;
+      box-shadow:0 4px 20px rgba(0,0,0,0.5);min-width:180px;font-family:inherit;`;
+
+    const items = [
+      { icon: "📋", label: "Summarize chat",          action: () => runSummary(el) },
+      { icon: awayMode ? "🟣" : "💤", label: awayMode ? "Away Mode: ON (click to off)" : "Away Mode: OFF (click to on)", action: () => toggleAwayMode(el) },
+      { icon: "💾", label: "Save last reply as template", action: () => {
+        const text = getText(el).trim();
+        if (text) { saveTemplate(text); showToast("Template saved!"); }
+      }},
+      { icon: "📂", label: `Templates (${templates.length})`, action: () => showTemplatesPicker(el) },
+      { icon: "🌐", label: "Translate & reply",       action: () => runSmartReplyTranslate(el) },
+    ];
+
+    items.forEach(({ icon, label, action }) => {
+      const row = document.createElement("div");
+      row.style.cssText = "padding:8px 14px;cursor:pointer;display:flex;gap:8px;align-items:center;";
+      row.innerHTML = `<span>${icon}</span><span>${label}</span>`;
+      row.addEventListener("mouseenter", () => { row.style.background = "#2a2a2a"; });
+      row.addEventListener("mouseleave", () => { row.style.background = ""; });
+      row.addEventListener("mousedown", (e) => { e.preventDefault(); ctx.remove(); action(); });
+      ctx.appendChild(row);
+    });
+
+    document.documentElement.appendChild(ctx);
+    setTimeout(() => document.addEventListener("mousedown", function rm(e) {
+      if (!ctx.contains(e.target)) { ctx.remove(); document.removeEventListener("mousedown", rm); }
+    }), 50);
+  }
+
+  function showTemplatesPicker(el) {
+    if (!templates.length) { showToast("No templates saved yet."); return; }
+    const overlay = document.createElement("div");
+    overlay.style.cssText = `position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+      background:#1e1e1e;border:1px solid #444;border-radius:10px;padding:14px 16px;
+      z-index:2147483647;min-width:280px;max-width:400px;font-family:inherit;color:#e0e0e0;font-size:13px;`;
+    overlay.innerHTML = `<div style="font-weight:600;margin-bottom:10px;color:#7ab3e0">📂 Saved Templates</div>`;
+    templates.forEach((t, i) => {
+      const row = document.createElement("div");
+      row.style.cssText = "padding:7px 10px;border-radius:6px;cursor:pointer;border:1px solid #333;margin-bottom:6px;line-height:1.4;";
+      row.textContent = t.label;
+      row.addEventListener("mouseenter", () => { row.style.background = "#2a2a2a"; });
+      row.addEventListener("mouseleave", () => { row.style.background = ""; });
+      row.addEventListener("mousedown", (e) => { e.preventDefault(); overlay.remove(); setText(el, t.text); el.focus(); });
+      overlay.appendChild(row);
+    });
+    const close = document.createElement("div");
+    close.style.cssText = "text-align:right;margin-top:8px;";
+    close.innerHTML = `<button style="background:#333;border:1px solid #555;color:#ccc;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:12px">Close</button>`;
+    close.querySelector("button").addEventListener("mousedown", (e) => { e.preventDefault(); overlay.remove(); });
+    overlay.appendChild(close);
+    document.documentElement.appendChild(overlay);
+  }
+
+  function showToast(msg) {
+    const t = document.createElement("div");
+    t.style.cssText = `position:fixed;bottom:80px;right:20px;background:#1e1e1e;color:#e0e0e0;
+      border:1px solid #444;border-radius:8px;padding:8px 14px;font-size:12px;
+      z-index:2147483647;font-family:inherit;box-shadow:0 2px 12px rgba(0,0,0,0.4);`;
+    t.textContent = msg;
+    document.documentElement.appendChild(t);
+    setTimeout(() => t.remove(), 2500);
+  }
+
+  async function runSmartReplyTranslate(el) {
+    const chatMsgs = extractChatHistory(el);
+    const lastThem = chatMsgs.filter(m => m.role === "them").pop();
+    if (!lastThem) return;
+    const lang = lastThem.content;
+    // Inject language hint into smart reply
+    const s = getSrBtn();
+    const orig = s.textContent;
+    s.textContent = "⏳"; s.style.pointerEvents = "none";
+    const result = await new Promise((resolve, reject) => {
+      let port;
+      try { port = chrome.runtime.connect({ name: "te-stream" }); }
+      catch (e) { reject(e); return; }
+      let raw = ""; let settled = false;
+      const done = v => { if (!settled) { settled = true; port.disconnect(); resolve(v); } };
+      const fail = e => { if (!settled) { settled = true; port.disconnect(); reject(e); } };
+      const timer = setTimeout(() => fail(new Error("Timeout")), 60000);
+      port.onMessage.addListener(msg => {
+        if (msg.error) { clearTimeout(timer); fail(new Error(msg.error)); return; }
+        if (msg.token) raw += msg.token;
+        if (msg.done)  { clearTimeout(timer); done(clean(raw)); }
+      });
+      port.onDisconnect.addListener(() => { clearTimeout(timer); if (!settled) fail(new Error("Disconnected")); });
+      const lines = chatMsgs.slice(-6).map(m => `${m.role === "me" ? "You" : "Them"}: ${m.content}`).join("\n");
+      port.postMessage({
+        messages: [
+          { role: "system", content: "Detect the language Them is using. Write You's reply in that SAME language. Output ONLY the reply text." },
+          { role: "user",   content: `Conversation:\n${lines}\n\nWrite You's reply in the same language as Them:` },
+        ],
+        options: { temperature: 0.65, num_predict: 150 },
+      });
+    }).catch(() => null);
+    s.textContent = orig; s.style.pointerEvents = "";
+    if (result) { setText(el, result); scheduleFollowUp(el); }
   }
 
   function positionTrigger(el) {
@@ -986,6 +1104,7 @@
       }
       setText(el, result);
       trackUsage("smartreply");
+      scheduleFollowUp(el);
       s.textContent = origText;
       s.style.pointerEvents = "";
     }
@@ -1289,6 +1408,139 @@
     }
   });
 
+  // ── Response timer ───────────────────────────────────────────────────────
+  function fmtWait(ms) {
+    const m = Math.floor(ms / 60000);
+    if (m < 1)   return "< 1m";
+    if (m < 60)  return `${m}m`;
+    const h = Math.floor(m / 60), rm = m % 60;
+    return rm ? `${h}h ${rm}m` : `${h}h`;
+  }
+
+  function startResponseTimer(chatMsgs) {
+    clearInterval(responseTimerInt);
+    const s = srBtn;
+    if (!s) return;
+    const lastThem = [...chatMsgs].reverse().find(m => m.role === "them");
+    if (!lastThem?.timestamp) { s.title = "Smart Reply"; return; }
+
+    const update = () => {
+      const waited = Date.now() - lastThem.timestamp.getTime();
+      const label  = fmtWait(waited);
+      s.title = `Smart Reply — client waiting ${label}`;
+      // Colour: green < 1h, amber 1–3h, red > 3h
+      if (waited < 3600000)       s.style.borderColor = "#2ea043";
+      else if (waited < 10800000) s.style.borderColor = "#e3a008";
+      else                        s.style.borderColor = "#cf222e";
+    };
+    update();
+    responseTimerInt = setInterval(update, 60000);
+  }
+
+  // ── Mood detector ────────────────────────────────────────────────────────
+  function detectMood(chatMsgs) {
+    const recent = chatMsgs.filter(m => m.role === "them").slice(-3).map(m => m.content.toLowerCase()).join(" ");
+    if (/urgent|asap|immediately|right now|waiting|still|how long|when will|days? ago|hours? ago|\?\?\?|\?\?/.test(recent)) return "urgent";
+    if (/disappointed|frustrated|unacceptable|terrible|awful|worst|refund|cancel|scam|fake|report/.test(recent)) return "angry";
+    if (/thank|great|perfect|amazing|love|awesome|excellent|well done|good job/.test(recent)) return "happy";
+    return "neutral";
+  }
+
+  const MOOD_ICON = { urgent: "⚡", angry: "🔴", happy: "🟢", neutral: "💬" };
+
+  // ── Smart templates ──────────────────────────────────────────────────────
+  function saveTemplate(text) {
+    const label = text.slice(0, 40) + (text.length > 40 ? "…" : "");
+    templates = [{ label, text }, ...templates.filter(t => t.text !== text)].slice(0, 10);
+    try { chrome.storage.local.set({ te_templates: templates }); } catch (_) {}
+  }
+
+  function matchTemplates(chatMsgs) {
+    if (!templates.length) return [];
+    const last = chatMsgs.filter(m => m.role === "them").pop()?.content?.toLowerCase() || "";
+    return templates.filter(t => {
+      const words = last.split(/\s+/).filter(w => w.length > 4);
+      return words.some(w => t.text.toLowerCase().includes(w));
+    }).slice(0, 3);
+  }
+
+  // ── Follow-up reminder ───────────────────────────────────────────────────
+  function scheduleFollowUp(el) {
+    clearTimeout(followUpTimer);
+    // If no reply from client in 24h, remind user to follow up
+    followUpTimer = setTimeout(() => {
+      if (Notification.permission === "granted") {
+        new Notification("Follow-up reminder", {
+          body: "No reply yet — consider sending a follow-up message.",
+          icon: "https://www.fiverr.com/favicon.ico",
+        });
+      }
+    }, 24 * 60 * 60 * 1000);
+  }
+
+  // ── Conversation summary ─────────────────────────────────────────────────
+  async function runSummary(el) {
+    const chatMsgs = extractChatHistory(el);
+    if (!chatMsgs.length) return;
+    const lines = chatMsgs.map(m => `${m.role === "me" ? "You" : "Them"}: ${m.content}`).join("\n");
+
+    const s = getSrBtn();
+    const orig = s.textContent;
+    s.textContent = "⏳"; s.style.pointerEvents = "none";
+
+    const result = await new Promise((resolve, reject) => {
+      let port;
+      try { port = chrome.runtime.connect({ name: "te-stream" }); }
+      catch (e) { reject(e); return; }
+      let raw = ""; let settled = false;
+      const done = v => { if (!settled) { settled = true; port.disconnect(); resolve(v); } };
+      const fail = e => { if (!settled) { settled = true; port.disconnect(); reject(e); } };
+      const timer = setTimeout(() => fail(new Error("Timeout")), 30000);
+      port.onMessage.addListener(msg => {
+        if (msg.error) { clearTimeout(timer); fail(new Error(msg.error)); return; }
+        if (msg.token) raw += msg.token;
+        if (msg.done)  { clearTimeout(timer); done(clean(raw)); }
+      });
+      port.onDisconnect.addListener(() => { clearTimeout(timer); if (!settled) fail(new Error("Disconnected")); });
+      port.postMessage({
+        messages: [
+          { role: "system", content: "Summarize this conversation in 3 concise bullet points. Output ONLY the bullets, no intro." },
+          { role: "user",   content: lines },
+        ],
+        options: { temperature: 0.3, num_predict: 200 },
+      });
+    }).catch(() => null);
+
+    s.textContent = orig; s.style.pointerEvents = "";
+
+    if (result) {
+      // Show summary in a small overlay
+      const overlay = document.createElement("div");
+      overlay.style.cssText = `position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+        background:#1e1e1e;color:#e0e0e0;border:1px solid #444;border-radius:10px;
+        padding:16px 20px;max-width:400px;width:90%;z-index:2147483647;font-size:13px;
+        line-height:1.6;box-shadow:0 8px 32px rgba(0,0,0,0.6);white-space:pre-wrap;font-family:inherit;`;
+      overlay.innerHTML = `<div style="font-weight:600;margin-bottom:8px;color:#7ab3e0">📋 Conversation Summary</div>${result}
+        <div style="text-align:right;margin-top:12px">
+          <button id="te-summary-close" style="background:#333;border:1px solid #555;color:#ccc;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:12px">Close</button>
+        </div>`;
+      document.documentElement.appendChild(overlay);
+      overlay.querySelector("#te-summary-close").addEventListener("mousedown", () => overlay.remove());
+      setTimeout(() => overlay.remove(), 15000);
+    }
+  }
+
+  // ── Away mode auto-reply ─────────────────────────────────────────────────
+  function toggleAwayMode(el) {
+    awayMode = !awayMode;
+    const s = getSrBtn();
+    s.style.background = awayMode ? "#4a1e6e" : "#1e1e1e";
+    s.title = awayMode ? "Smart Reply (Away Mode ON — auto-replying)" : "Smart Reply";
+    if (awayMode && Notification.permission === "granted") {
+      new Notification("Away Mode ON", { body: "Text Enhancer will auto-generate replies when clients message you." });
+    }
+  }
+
   // ── New message detector ─────────────────────────────────────────────────
   // Watch the DOM for new incoming messages and pulse the SR button
   let lastSeenMsgCount = 0;
@@ -1307,29 +1559,41 @@
     if (!container || container === document.body) return;
 
     newMsgObserver = new MutationObserver(() => {
-      const msgs = extractChatHistory(inputEl);
+      const msgs     = extractChatHistory(inputEl);
       const themMsgs = msgs.filter(m => m.role === "them").length;
+
+      // Update response timer + mood on every DOM change
+      startResponseTimer(msgs);
+      const mood = detectMood(msgs);
+      const s    = getSrBtn();
+      if (s) s.textContent = MOOD_ICON[mood] || "💬";
+
       if (themMsgs > lastSeenMsgCount && lastSeenMsgCount > 0) {
         // New message from client — pulse the SR button
-        const s = getSrBtn();
-        if (s.style.display !== "none") {
-          s.style.animation = "te-pulse 0.6s ease 3";
-          s.style.background = "#1a6e3c";
+        if (s && s.style.display !== "none") {
+          s.style.animation   = "te-pulse 0.6s ease 3";
+          s.style.background  = awayMode ? "#4a1e6e" : "#1a6e3c";
           setTimeout(() => {
-            s.style.animation = "";
-            s.style.background = "#1e1e1e";
+            s.style.animation  = "";
+            s.style.background = awayMode ? "#4a1e6e" : "#1e1e1e";
           }, 2000);
         }
-        // Desktop notification if permitted
+        // Desktop notification
         if (Notification.permission === "granted") {
           const last = msgs.filter(m => m.role === "them").pop();
+          const body = last?.content?.slice(0, 80) || "Client sent a message";
+          const mood2 = detectMood(msgs);
+          const prefix = mood2 === "urgent" ? "⚡ Urgent: " : mood2 === "angry" ? "🔴 " : "";
           new Notification("New message on Fiverr", {
-            body: last?.content?.slice(0, 80) || "Client sent a message",
+            body: prefix + body,
             icon: "https://www.fiverr.com/favicon.ico",
             silent: false,
           });
         }
+        // Away mode: auto-generate reply
+        if (awayMode) runSmartReply(inputEl);
       }
+
       lastSeenMsgCount = themMsgs;
     });
 
@@ -1341,11 +1605,15 @@
     Notification.requestPermission();
   }
 
-  // Start watcher when an editable field is focused
+  // Start watcher + timer + mood when an editable field is focused
   document.addEventListener("focusin", (e) => {
     if (!isEditable(e.target)) return;
     const msgs = extractChatHistory(e.target);
     lastSeenMsgCount = msgs.filter(m => m.role === "them").length;
+    startResponseTimer(msgs);
+    const mood = detectMood(msgs);
+    const s = getSrBtn();
+    if (s) s.textContent = MOOD_ICON[mood] || "💬";
     startNewMessageWatcher(e.target);
   });
 
