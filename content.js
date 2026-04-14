@@ -81,10 +81,12 @@
     custom:       "", // filled dynamically from customPrompt
   };
 
-  let trigger  = null; // small floating ✦ button
-  let menu     = null; // action menu panel
-  let suggest  = null; // auto-suggestion bar
-  let focused  = null; // currently focused editable element
+  let trigger     = null; // small floating ✦ button
+  let srBtn       = null; // dedicated Smart Reply 💬 button (outside menu)
+  let menu        = null; // action menu panel
+  let suggest     = null; // auto-suggestion bar
+  let focused     = null; // currently focused editable element
+  let lastFocused = null; // persists after blur so menu clicks still have a target
 
   let suggestFor       = null;  // element the suggestion targets
   let suggestText      = "";    // suggested replacement text
@@ -190,19 +192,49 @@
     return trigger;
   }
 
+  function getSrBtn() {
+    if (srBtn) return srBtn;
+    srBtn = document.createElement("div");
+    srBtn.id    = "te-sr-btn";
+    srBtn.title = "Smart Reply";
+    srBtn.textContent = "💬";
+    srBtn.style.cssText = `
+      position:fixed;z-index:2147483647;display:none;
+      width:30px;height:30px;align-items:center;justify-content:center;
+      background:#1e1e1e;color:#fff;font-size:15px;border-radius:50%;
+      cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,0.35);
+      user-select:none;border:1px solid #444;transition:background 0.15s;
+    `;
+    srBtn.addEventListener("mouseenter", () => { srBtn.style.background = "#2d2d2d"; });
+    srBtn.addEventListener("mouseleave", () => { srBtn.style.background = "#1e1e1e"; });
+    srBtn.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
+    srBtn.addEventListener("click", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      hideMenu();
+      runSmartReply(focused || lastFocused);
+    });
+    document.documentElement.appendChild(srBtn);
+    return srBtn;
+  }
+
   function positionTrigger(el) {
     const t = getTrigger();
+    const s = getSrBtn();
     t.style.display = "flex";
-    if (triggerDragged) return; // user repositioned it — leave it there
+    s.style.display = "flex";
+    if (triggerDragged) return;
     const r = el.getBoundingClientRect();
-    const top  = r.bottom - 34;
-    const left = r.right  - 34;
-    t.style.top  = Math.max(4, top)  + "px";
-    t.style.left = Math.max(4, left) + "px";
+    const top  = Math.max(4, r.bottom - 34);
+    const left = Math.max(4, r.right  - 34);
+    t.style.top  = top  + "px";
+    t.style.left = left + "px";
+    s.style.top  = top  + "px";
+    s.style.left = Math.max(4, left - 38) + "px";
   }
 
   function hideTrigger() {
     if (trigger) trigger.style.display = "none";
+    if (srBtn)   srBtn.style.display   = "none";
     hideMenu();
   }
 
@@ -397,6 +429,13 @@
     menu.id = "te-menu";
 
     ACTIONS.forEach(({ label, type, icon }, i) => {
+      // divider before Professional (index 4)
+      if (i === 4) {
+        const div = document.createElement("div");
+        div.className = "te-divider";
+        menu.appendChild(div);
+      }
+
       const btn = document.createElement("button");
       btn.className = "te-btn";
       btn.dataset.type = type;
@@ -411,13 +450,6 @@
 
       btn.appendChild(iconEl);
       btn.appendChild(labelEl);
-
-      // divider after Proofread (index 2)
-      if (i === 3) {
-        const div = document.createElement("div");
-        div.className = "te-divider";
-        menu.appendChild(div);
-      }
 
       btn.addEventListener("mousedown", (e) => {
         e.preventDefault();
@@ -442,17 +474,17 @@
 
   function reorderMenuByUsage() {
     if (!menu) return;
-    const host  = window.location.hostname;
-    const usage = siteUsage[host] || {};
-    const btns  = [...menu.querySelectorAll(".te-btn[data-type]")];
+    const host    = window.location.hostname;
+    const usage   = siteUsage[host] || {};
+    const btns    = [...menu.querySelectorAll(".te-btn[data-type]")];
     const divider = menu.querySelector(".te-divider");
-    // Sort by usage desc, keep custom + translate at bottom
-    const pinned = ["translate", "custom"];
-    const sorted = btns
+
+    const pinned  = ["translate", "custom"];
+    const sorted  = btns
       .filter(b => !pinned.includes(b.dataset.type))
       .sort((a, b) => (usage[b.dataset.type] || 0) - (usage[a.dataset.type] || 0));
     const pinnedBtns = btns.filter(b => pinned.includes(b.dataset.type));
-    // Re-append in sorted order
+
     sorted.forEach(b => menu.appendChild(b));
     if (divider) menu.appendChild(divider);
     pinnedBtns.forEach(b => menu.appendChild(b));
@@ -676,25 +708,307 @@
     return port;
   }
 
+  // ── Smart Reply: chat history extraction ─────────────────────────────────
+
+  function extractChatHistory(inputEl) {
+    const host = window.location.hostname;
+
+    // ── WhatsApp Web ──────────────────────────────────────────────────────
+    if (host.includes("web.whatsapp.com")) {
+      const msgs = [];
+      document.querySelectorAll("#main .message-in, #main .message-out").forEach(el => {
+        const isMe = el.classList.contains("message-out");
+        const text = (el.querySelector(".copyable-text") || el).innerText?.split("\n")[0]?.trim();
+        if (text) msgs.push({ role: isMe ? "me" : "them", content: text });
+      });
+      return msgs.slice(-30);
+    }
+
+    // ── LinkedIn Messages ─────────────────────────────────────────────────
+    if (host.includes("linkedin.com")) {
+      const msgs = [];
+      const container = document.querySelector(
+        ".msg-s-message-list-container, .msg-overlay-conversation-bubble__content-wrapper"
+      );
+      if (container) {
+        container.querySelectorAll(".msg-s-message-list__event").forEach(el => {
+          const isMe = !!el.querySelector(".msg-s-event-listitem--outgoing, .msg-s-message-list__event--right");
+          const text = el.querySelector(".msg-s-event-listitem__body, .msg-s-message-list__event-body")?.innerText?.trim();
+          if (text) msgs.push({ role: isMe ? "me" : "them", content: text });
+        });
+        return msgs.slice(-30);
+      }
+    }
+
+    // ── Fiverr + Generic ─────────────────────────────────────────────────
+    // Walk up from input to find scrollable chat container
+    let container = inputEl?.parentElement;
+    const maxDepth = host.includes("fiverr.com") ? 20 : 12;
+    for (let i = 0; i < maxDepth; i++) {
+      if (!container || container === document.body) break;
+      if (container.scrollHeight > container.clientHeight + 100 &&
+          container.children.length > 2) break;
+      container = container.parentElement;
+    }
+    if (!container || container === document.body) return [];
+
+    // Narrow to the direct child that holds the input (excludes sidebars)
+    let searchRoot = inputEl;
+    while (searchRoot?.parentElement && searchRoot.parentElement !== container) {
+      searchRoot = searchRoot.parentElement;
+    }
+    if (!searchRoot || searchRoot === container) searchRoot = container;
+    if (!searchRoot) return [];
+
+    // ── Strategy 1: "Me" label detection (works for Fiverr inbox list layout)
+    // Fiverr inbox shows "Me" as an explicit sender label next to Nadir's messages.
+    // Find all those labels and mark their ancestor rows so we can classify content.
+    const myRowRoots = new Set();
+    Array.from(searchRoot.querySelectorAll("*")).forEach(el => {
+      if (el.children.length > 0) return;
+      if (el.innerText?.trim() !== "Me") return;
+      // Walk up and tag the next 5 ancestors as "my message" containers
+      let node = el.parentElement;
+      for (let i = 0; i < 5 && node && node !== searchRoot; i++) {
+        myRowRoots.add(node);
+        node = node.parentElement;
+      }
+    });
+
+    function isMyRow(el) {
+      let node = el;
+      while (node && node !== searchRoot) {
+        if (myRowRoots.has(node)) return true;
+        node = node.parentElement;
+      }
+      return false;
+    }
+
+    const seen   = new Set();
+    let   lastTs = null;
+    const candidates = [];
+
+    Array.from(searchRoot.querySelectorAll("*")).forEach(el => {
+      // Leaf nodes only — skips containers whose innerText bundles username+timestamp+message
+      if (!el || el.children.length > 0) return;
+      const text = el.innerText?.trim();
+      if (!text || text.length < 2 || seen.has(text)) return;
+
+      const ts = parseMessageTimestamp(text);
+      if (ts) { lastTs = ts; return; }
+
+      if (text === "Me") return;
+      if (/^[A-Z]{1,4}$/.test(text)) return;                                    // avatar initial / short all-caps label (NAK, etc.)
+      if (/^\w+$/.test(text) && /\d/.test(text) && text.length < 30) return;    // username9000 style
+      if (/^\d{1,2}:\d{2}(\s*(AM|PM))?$/i.test(text)) return;
+      if (/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}/i.test(text)) return;
+      if (/\d+(\.\d+)?\s*(MB|KB|GB)/i.test(text)) return;
+      if (/^\d+\s*Files?$/i.test(text)) return;
+      if (/^Attachment_\d+/.test(text)) return;
+      if (/Screen Recording/i.test(text)) return;
+      // Sidebar duration/delivery strings ("3 days", "7 hours ago", etc.)
+      if (/^\d+\s*(days?|hours?|minutes?)\s*(ago)?$/i.test(text)) return;
+      // Fiverr UI buttons and system strings
+      if (/^(create an offer|send offer|add extras|view order|order details|request extension|learn more|share feedback|we have your back)$/i.test(text)) return;
+      if (/joined the conversation/i.test(text)) return;
+      if (/take a moment to browse/i.test(text)) return;
+      // Bot/system messages referencing the freelancer by full name
+      if (/Nadir Ali Khan/i.test(text)) return;
+
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 10 || rect.height < 5) return;
+
+      // Only include elements that are above (or at) the input — exclude any sidebar below/right
+      if (inputEl) {
+        const inputRect = inputEl.getBoundingClientRect();
+        if (rect.top > inputRect.bottom + 20) return;   // below the input area
+        if (rect.left > inputRect.right  + 5)  return;  // to the right of the input (sidebar)
+      }
+
+      // Skip elements with no timestamp — these are sidebar/UI elements before the chat starts
+      if (lastTs === null) return;
+
+      seen.add(text);
+      candidates.push({ el, text, rect, timestamp: lastTs });
+    });
+
+    if (!candidates.length) return [];
+
+    // If we found "Me" labels, use label-based detection
+    if (myRowRoots.size > 0) {
+      return candidates.slice(-30).map(c => ({
+        role:      isMyRow(c.el) ? "me" : "them",
+        content:   c.text,
+        timestamp: c.timestamp,
+      }));
+    }
+
+    // ── Strategy 2: Dynamic position-based (bubble chat layouts)
+    // Filter out full-width rows that give misleading center X
+    const rootWidth = searchRoot.getBoundingClientRect().width || window.innerWidth;
+    const bubbles   = candidates.filter(c => c.rect.width <= rootWidth * 0.82);
+    if (!bubbles.length) return candidates.slice(-30).map(c => ({ role: "them", content: c.text, timestamp: c.timestamp }));
+
+    const centers     = bubbles.map(c => c.rect.left + c.rect.width / 2);
+    const dynamicMidX = (Math.min(...centers) + Math.max(...centers)) / 2;
+
+    return bubbles.slice(-30).map(c => ({
+      role:      (c.rect.left + c.rect.width / 2) > dynamicMidX ? "me" : "them",
+      content:   c.text,
+      timestamp: c.timestamp,
+    }));
+  }
+
+  // ── Smart Reply helpers ───────────────────────────────────────────────────
+
+  function parseMessageTimestamp(text) {
+    const m = text.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2}),?\s+(\d{1,2}:\d{2}\s*(AM|PM)?)/i);
+    if (!m) return null;
+    try { return new Date(`${m[1]} ${m[2]}, ${new Date().getFullYear()} ${m[3]}`); } catch (_) { return null; }
+  }
+
+  function detectClientType(chatMsgs) {
+    const all = chatMsgs.map(m => m.content).join(" ").toLowerCase();
+    if (/\b(order|delivery|revision|phase|deployed|running|logs?|testing|live|milestone|submitted|bot|code)\b/.test(all)) {
+      if (/\b(issue|bug|error|not working|fix|broken|problem|help)\b/.test(all)) return "support";
+      return "active_order";
+    }
+    return "potential"; // still discussing / no order yet
+  }
+
+  function buildSmartReplyMessages(chatMsgs, draftText) {
+    const lastMsg     = chatMsgs[chatMsgs.length - 1];
+    const lastThemMsg = [...chatMsgs].reverse().find(m => m.role === "them");
+
+    // Time since client's last message
+    let timeNote = "";
+    if (lastThemMsg?.timestamp) {
+      const mins = (Date.now() - lastThemMsg.timestamp.getTime()) / 60000;
+      if (mins >= 120) {
+        const hrs = Math.round(mins / 60);
+        timeNote = `Note: The client's message was sent ~${hrs} hour${hrs > 1 ? "s" : ""} ago — briefly acknowledge the wait (e.g., "Thanks for your patience").`;
+      } else if (mins >= 45) {
+        timeNote = `Note: The client's message was sent ~${Math.round(mins)} minutes ago.`;
+      }
+    }
+
+    const recentMsgs = chatMsgs.slice(-6);
+    const lines = recentMsgs.map(m =>
+      `${m.role === "me" ? "You" : "Them"}: ${m.content}`
+    ).join("\n");
+
+    // Match reply length to last client message complexity
+    const lastClientMsg = chatMsgs[chatMsgs.length - 1]?.content || "";
+    const lengthGuide = lastClientMsg.length < 20
+      ? "Reply with 1 short sentence only."
+      : lastClientMsg.length < 80
+        ? "Keep the reply to 1–2 sentences."
+        : "Keep the reply to 2–3 sentences max.";
+
+    const system = `Write a short, natural reply to the last message. ${lengthGuide}${timeNote ? " " + timeNote : ""} Reply ONLY about what was discussed. Output ONLY the reply text.`;
+
+    const userContent = lines
+      ? `Recent messages:\n${lines}${draftText ? `\n\nDraft started: ${draftText}` : ""}\n\nWrite your reply to their last message:`
+      : draftText
+        ? `Draft started: "${draftText}"\nComplete and improve this reply.`
+        : "Write a brief, friendly opening reply.";
+
+    return { system, userContent, lastMsg };
+  }
+
+  async function runSmartReply(el) {
+    if (!el) return;
+
+    const s = getSrBtn();
+    const origText = s.textContent;
+    s.textContent = "⏳";
+    s.style.pointerEvents = "none";
+
+    const draftText = getText(el).trim();
+    const chatMsgs  = extractChatHistory(el);
+    console.log("[TE] extractedChat", JSON.stringify(chatMsgs, null, 2));
+
+    // Only reply if client sent the last message
+    if (chatMsgs.length > 0 && chatMsgs[chatMsgs.length - 1].role === "me") {
+      s.textContent = "✓";
+      setTimeout(() => { s.textContent = origText; s.style.pointerEvents = ""; }, 1800);
+      return;
+    }
+
+    const { system, userContent } = buildSmartReplyMessages(chatMsgs, draftText);
+
+    // Use the streaming port — more reliable than sendMessage (avoids SW cold-start drops)
+    const result = await new Promise((resolve, reject) => {
+      let port;
+      try { port = chrome.runtime.connect({ name: "te-stream" }); }
+      catch (e) { reject(new Error("Reload page and retry: " + e.message)); return; }
+
+      let raw = "";
+      let settled = false;
+      const done = (val) => { if (settled) return; settled = true; port.disconnect(); resolve(val); };
+      const fail  = (err) => { if (settled) return; settled = true; port.disconnect(); reject(err);  };
+
+      const timer = setTimeout(() => fail(new Error("Timed out — retry")), 60000);
+
+      port.onMessage.addListener((msg) => {
+        console.log("[TE] SR msg:", JSON.stringify(msg).slice(0, 120));
+        if (msg.error) { clearTimeout(timer); fail(new Error(msg.error)); return; }
+        if (msg.token) raw += msg.token;
+        if (msg.done)  { clearTimeout(timer); done(clean(raw)); }
+      });
+
+      port.onDisconnect.addListener(() => {
+        const err = chrome.runtime.lastError?.message;
+        clearTimeout(timer);
+        console.log("[TE] SR port disconnected, raw.length:", raw.length, "err:", err);
+        if (!settled) fail(new Error(err || "Port closed — reload page and retry"));
+      });
+
+      port.postMessage({
+        messages: [
+          { role: "system", content: system },
+          { role: "user",   content: userContent },
+        ],
+        options: { temperature: 0.65, num_predict: 150 },
+      });
+    }).catch(err => {
+      console.error("[TE] Smart Reply error:", err?.message);
+      s.textContent = "⚠";
+      s.style.pointerEvents = "";
+      setTimeout(() => { s.textContent = origText; }, 2000);
+      return null;
+    });
+
+    if (result) {
+      if (draftText) {
+        undoStack.push({ el, text: draftText });
+        if (undoStack.length > 5) undoStack.shift();
+      }
+      setText(el, result);
+      trackUsage("smartreply");
+      s.textContent = origText;
+      s.style.pointerEvents = "";
+    }
+  }
+
   // ── Action ────────────────────────────────────────────────────────────────
 
   async function runAction(type) {
-    const el   = focused;
-    const text = getText(el).trim();
-    if (!text) { hideMenu(); return; }
+    const el = focused || lastFocused;
 
-    // Custom action: show prompt input inline
     if (type === "custom") {
       showCustomPromptInput(el);
       return;
     }
 
+    const text = getText(el).trim();
+    if (!text) { hideMenu(); return; }
+
+    if (!menu) return;
     const btn = menu.querySelector(`[data-type="${type}"]`);
+    if (!btn) return;
     menu.querySelectorAll(".te-btn").forEach(b => (b.disabled = true));
     btn.innerHTML = '<span class="te-btn-icon">⏳</span><span>Working...</span>';
-
-    // Set custom system message dynamically
-    if (type === "custom") SYSTEM_MSG.custom = `${customPrompt} The text is in <input> tags. Output ONLY the result, no explanation.`;
 
     try {
       const result = await callOllama(text, type);
@@ -719,15 +1033,32 @@
     try { chrome.storage.local.set({ te_site_usage: siteUsage }); } catch (_) {}
   }
 
+  function rebuildMenu(m) {
+    m.innerHTML = "";
+    m.style.minWidth = "";
+    ACTIONS.forEach(({ label, type, icon }, i) => {
+      if (i === 4) { const div = document.createElement("div"); div.className = "te-divider"; m.appendChild(div); }
+      const btn = document.createElement("button");
+      btn.className = "te-btn";
+      btn.dataset.type = type;
+      btn.dataset.label = label;
+      const iconEl = document.createElement("span"); iconEl.className = "te-btn-icon"; iconEl.textContent = icon;
+      const labelEl = document.createElement("span"); labelEl.textContent = label;
+      btn.appendChild(iconEl); btn.appendChild(labelEl);
+      btn.addEventListener("mousedown", (ev) => { ev.preventDefault(); ev.stopPropagation(); runAction(type); });
+      m.appendChild(btn);
+    });
+  }
+
   function showCustomPromptInput(el) {
     const m = getMenu();
     m.innerHTML = "";
-    m.style.minWidth = "260px";
+    m.style.minWidth = "280px";
 
     const wrapper = document.createElement("div");
     wrapper.style.cssText = "padding:10px;display:flex;flex-direction:column;gap:8px;";
 
-    // Back button row
+    // Header row
     const topRow = document.createElement("div");
     topRow.style.cssText = "display:flex;align-items:center;gap:6px;";
 
@@ -735,43 +1066,41 @@
     backBtn.className = "te-btn";
     backBtn.style.cssText = "padding:4px 10px;font-size:12px;width:auto;";
     backBtn.innerHTML = '<span class="te-btn-icon">←</span><span>Back</span>';
-    backBtn.addEventListener("mousedown", (e) => {
-      e.preventDefault();
-      m.style.minWidth = "";
-      m.innerHTML = "";
-      // Rebuild menu buttons
-      ACTIONS.forEach(({ label, type, icon }, i) => {
-        const btn = document.createElement("button");
-        btn.className = "te-btn";
-        btn.dataset.type = type;
-        btn.dataset.label = label;
-        const iconEl = document.createElement("span");
-        iconEl.className = "te-btn-icon";
-        iconEl.textContent = icon;
-        const labelEl = document.createElement("span");
-        labelEl.textContent = label;
-        btn.appendChild(iconEl);
-        btn.appendChild(labelEl);
-        if (i === 3) { const div = document.createElement("div"); div.className = "te-divider"; m.appendChild(div); }
-        btn.addEventListener("mousedown", (ev) => { ev.preventDefault(); ev.stopPropagation(); runAction(type); });
-        m.appendChild(btn);
-      });
-    });
+    backBtn.addEventListener("mousedown", (e) => { e.preventDefault(); rebuildMenu(m); });
 
-    const labelEl = document.createElement("div");
-    labelEl.textContent = "Custom instruction";
-    labelEl.style.cssText = "font-size:11px;color:#aaa;font-weight:500;flex:1;";
+    const headerLabel = document.createElement("div");
+    headerLabel.textContent = "Custom instruction";
+    headerLabel.style.cssText = "font-size:11px;color:#aaa;font-weight:500;flex:1;";
 
     topRow.appendChild(backBtn);
-    topRow.appendChild(labelEl);
+    topRow.appendChild(headerLabel);
 
-    // Textarea (large)
+    // Instruction textarea
     const textarea = document.createElement("textarea");
     textarea.value = customPrompt;
-    textarea.placeholder = "e.g. Make it sound like Hemingway\ne.g. Translate to French\ne.g. Make it more persuasive";
+    textarea.placeholder = "Tell AI what to do, e.g:\n• Tell him I need 2 more days\n• Ask for his requirements\n• Apologize for the delay";
     textarea.rows = 4;
     textarea.style.cssText = "background:#2d2d2d;color:#fff;border:1px solid #555;border-radius:6px;padding:8px;font-size:12px;outline:none;resize:vertical;width:100%;box-sizing:border-box;font-family:inherit;line-height:1.5;";
-    textarea.addEventListener("keydown", (e) => e.stopPropagation()); // prevent Ctrl+. etc
+    textarea.addEventListener("keydown", (e) => e.stopPropagation());
+
+    // Chat context toggle
+    const chatMsgs = extractChatHistory(el);
+    const hasChatCtx = chatMsgs.length > 0;
+
+    const ctxRow = document.createElement("div");
+    ctxRow.style.cssText = "display:flex;align-items:center;gap:6px;";
+    const ctxCheck = document.createElement("input");
+    ctxCheck.type = "checkbox";
+    ctxCheck.id = "te-ctx-toggle";
+    ctxCheck.checked = hasChatCtx;
+    ctxCheck.disabled = !hasChatCtx;
+    ctxCheck.style.cssText = "accent-color:#0a66c2;cursor:pointer;";
+    const ctxLabel = document.createElement("label");
+    ctxLabel.htmlFor = "te-ctx-toggle";
+    ctxLabel.textContent = hasChatCtx ? `Include chat (${chatMsgs.length} msgs)` : "No chat detected";
+    ctxLabel.style.cssText = `font-size:11px;color:${hasChatCtx ? "#aaa" : "#555"};cursor:pointer;`;
+    ctxRow.appendChild(ctxCheck);
+    ctxRow.appendChild(ctxLabel);
 
     const runBtn = document.createElement("button");
     runBtn.className = "te-btn";
@@ -779,25 +1108,60 @@
     runBtn.style.cssText = "justify-content:center;background:#0a66c2;color:#fff;border-radius:8px;";
     runBtn.addEventListener("mousedown", async (e) => {
       e.preventDefault();
-      customPrompt = textarea.value.trim() || customPrompt;
+      const instruction = textarea.value.trim();
+      if (!instruction) return;
+      customPrompt = instruction;
       try { chrome.storage.local.set({ te_custom_prompt: customPrompt }); } catch (_) {}
+
+      runBtn.innerHTML = '<span class="te-btn-icon">⏳</span><span>Working...</span>';
+      runBtn.disabled = true;
+
+      const inputText = getText(el).trim();
+      const useChatCtx = ctxCheck.checked && hasChatCtx;
+
+      // Build system + user content with optional chat context
+      let system, userContent;
+      if (useChatCtx) {
+        const chatLines = chatMsgs.map(m =>
+          `${m.role === "me" ? "Nadir (me)" : "Client"}: ${m.content}`
+        ).join("\n");
+        system = `You are helping Nadir Ali, a Top Rated Freelancer on Fiverr, write a message to a client. Use the chat history for context. Follow the instruction exactly. Keep the reply concise and professional (2–3 sentences max). Output ONLY the message text — no explanation.`;
+        userContent = `Chat history:\n${chatLines}\n\nInstruction: ${instruction}${inputText ? `\n\nDraft: ${inputText}` : ""}\n\nWrite Nadir's reply:`;
+      } else {
+        system = `Follow this instruction: ${instruction}\nThe text is in <input> tags. Output ONLY the result — no explanation.`;
+        userContent = `<input>${inputText || "..."}</input>`;
+      }
+
       hideMenu();
       m.style.minWidth = "";
-      SYSTEM_MSG.custom = `${customPrompt} The text is in <input> tags. Output ONLY the result, no explanation.`;
-      SHOTS.custom = [];
-      const text = getText(el).trim();
-      if (!text) return;
-      const result = await callOllama(text, "custom").catch(() => null);
-      if (result) {
-        undoStack.push({ el, text });
-        if (undoStack.length > 5) undoStack.shift();
+
+      try {
+        const result = await new Promise((resolve, reject) => {
+          chrome.runtime.sendMessage({
+            type: "ollama",
+            payload: {
+              model: MODEL, stream: false,
+              options: { temperature: 0.65, num_predict: 150 },
+              messages: [
+                { role: "system", content: system },
+                { role: "user",   content: userContent },
+              ],
+            },
+          }, (resp) => {
+            if (chrome.runtime.lastError) return reject(new Error("Refresh page and retry"));
+            if (!resp?.ok) return reject(new Error(resp?.error || "AI error"));
+            resolve(clean(resp.text));
+          });
+        });
+        if (inputText) { undoStack.push({ el, text: inputText }); if (undoStack.length > 5) undoStack.shift(); }
         setText(el, result);
         trackUsage("custom");
-      }
+      } catch (_) {}
     });
 
     wrapper.appendChild(topRow);
     wrapper.appendChild(textarea);
+    wrapper.appendChild(ctxRow);
     wrapper.appendChild(runBtn);
     m.appendChild(wrapper);
     setTimeout(() => textarea.focus(), 50);
@@ -810,16 +1174,16 @@
 
   function handleTyping(el) {
     if (!isEditable(el)) return;
-    focused = el;
+    focused = el; lastFocused = el;
 
     clearTimeout(typingTimer);
     clearTimeout(suggestTimer);
     hideMenu();
     hideSuggest();
 
-    const text = getText(el).trim();
-    if (text.length < 4) { hideTrigger(); return; }
     positionTrigger(el);
+
+    const text = getText(el).trim();
 
     // Auto-suggest: stream after 1.5s pause, text ≥8 chars, only if changed and not a URL/code
     if (text.length >= 8 && text !== lastSuggestInput && !shouldSkip(text)) {
@@ -868,9 +1232,8 @@
 
   document.addEventListener("focusin", (e) => {
     if (!isEditable(e.target)) return;
-    focused = e.target;
-    const text = getText(e.target).trim();
-    if (text.length >= 4) positionTrigger(e.target);
+    focused = e.target; lastFocused = e.target;
+    positionTrigger(e.target);
   });
 
   document.addEventListener("focusout", (e) => {
