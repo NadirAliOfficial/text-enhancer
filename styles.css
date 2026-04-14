@@ -164,3 +164,11 @@
   width: 100%;
   box-sizing: border-box;
 }
+
+/* ── New message pulse ───────────────────────────────────────────────────── */
+
+@keyframes te-pulse {
+  0%   { transform: scale(1);    box-shadow: 0 0 0 0 rgba(26,110,60,0.7); }
+  50%  { transform: scale(1.25); box-shadow: 0 0 0 8px rgba(26,110,60,0);  }
+  100% { transform: scale(1);    box-shadow: 0 0 0 0 rgba(26,110,60,0);   }
+}

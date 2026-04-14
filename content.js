@@ -905,10 +905,10 @@
         ? "Keep the reply to 1–2 sentences."
         : "Keep the reply to 2–3 sentences max.";
 
-    const system = `Write a short, natural reply to the last message. ${lengthGuide}${timeNote ? " " + timeNote : ""} Reply ONLY about what was discussed. Output ONLY the reply text.`;
+    const system = `In this conversation, "You" are the sender and "Them" is the other person. Write the next message FROM "You" in response to "Them"'s last message. ${lengthGuide}${timeNote ? " " + timeNote : ""} Stay strictly on the topics discussed. Output ONLY the reply text — no labels, no explanations.`;
 
     const userContent = lines
-      ? `Recent messages:\n${lines}${draftText ? `\n\nDraft started: ${draftText}` : ""}\n\nWrite your reply to their last message:`
+      ? `Conversation:\n${lines}${draftText ? `\n\nDraft started: ${draftText}` : ""}\n\nWrite You's reply:`
       : draftText
         ? `Draft started: "${draftText}"\nComplete and improve this reply.`
         : "Write a brief, friendly opening reply.";
@@ -1245,6 +1245,8 @@
         (suggest  && suggest.contains(active))  ||
         isEditable(active)
       ) return;
+      // Don't hide anything if the menu is currently open
+      if (menu && menu.style.display === "flex") return;
       hideTrigger();
       hideSuggest();
       clearTimeout(suggestTimer);
@@ -1287,7 +1289,67 @@
     }
   });
 
-  // Warmup: ask background to load the model so first real request is instant
+  // ── New message detector ─────────────────────────────────────────────────
+  // Watch the DOM for new incoming messages and pulse the SR button
+  let lastSeenMsgCount = 0;
+  let newMsgObserver   = null;
+
+  function startNewMessageWatcher(inputEl) {
+    if (newMsgObserver) { newMsgObserver.disconnect(); newMsgObserver = null; }
+
+    // Walk up to find the scrollable chat container
+    let container = inputEl?.parentElement;
+    for (let i = 0; i < 20; i++) {
+      if (!container || container === document.body) break;
+      if (container.scrollHeight > container.clientHeight + 100 && container.children.length > 2) break;
+      container = container.parentElement;
+    }
+    if (!container || container === document.body) return;
+
+    newMsgObserver = new MutationObserver(() => {
+      const msgs = extractChatHistory(inputEl);
+      const themMsgs = msgs.filter(m => m.role === "them").length;
+      if (themMsgs > lastSeenMsgCount && lastSeenMsgCount > 0) {
+        // New message from client — pulse the SR button
+        const s = getSrBtn();
+        if (s.style.display !== "none") {
+          s.style.animation = "te-pulse 0.6s ease 3";
+          s.style.background = "#1a6e3c";
+          setTimeout(() => {
+            s.style.animation = "";
+            s.style.background = "#1e1e1e";
+          }, 2000);
+        }
+        // Desktop notification if permitted
+        if (Notification.permission === "granted") {
+          const last = msgs.filter(m => m.role === "them").pop();
+          new Notification("New message on Fiverr", {
+            body: last?.content?.slice(0, 80) || "Client sent a message",
+            icon: "https://www.fiverr.com/favicon.ico",
+            silent: false,
+          });
+        }
+      }
+      lastSeenMsgCount = themMsgs;
+    });
+
+    newMsgObserver.observe(container, { childList: true, subtree: true });
+  }
+
+  // Request notification permission once
+  if (Notification.permission === "default") {
+    Notification.requestPermission();
+  }
+
+  // Start watcher when an editable field is focused
+  document.addEventListener("focusin", (e) => {
+    if (!isEditable(e.target)) return;
+    const msgs = extractChatHistory(e.target);
+    lastSeenMsgCount = msgs.filter(m => m.role === "them").length;
+    startNewMessageWatcher(e.target);
+  });
+
+  // ── Warmup: ask background to load the model so first real request is instant
   setTimeout(() => {
     try {
       chrome.runtime.sendMessage({
