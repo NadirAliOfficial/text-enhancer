@@ -7,13 +7,12 @@ function groqHeaders() {
   return { "Content-Type": "application/json", "Authorization": "Bearer " + getGroqKey() };
 }
 
-// On 429, rotate key and return wait seconds (or 0 to retry immediately with next key)
-function handle429(r) {
+// On 429, rotate to next key. Returns error string only after all keys exhausted.
+function handle429(r, attempt, totalKeys) {
   rotateGroqKey();
-  const wait = r.headers.get("retry-after") || r.headers.get("x-ratelimit-reset-requests") || "0";
-  const secs = Math.ceil(Number(wait) || 0);
-  // If next key is fresh (secs == 0 or small), retry immediately; else surface the wait
-  return secs > 5 ? "rate_limited:" + secs : null; // null = retry with new key
+  if (attempt < totalKeys) return null; // null = retry with next key
+  const wait = r.headers.get("retry-after") || r.headers.get("x-ratelimit-reset-requests") || "60";
+  return "rate_limited:" + Math.ceil(Number(wait) || 60);
 }
 
 // ── Non-streaming (manual actions) ───────────────────────────────────────────
@@ -43,9 +42,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       signal: ctrl.signal,
     });
     if (!r.ok) {
-      if (r.status === 429 && attempt < GROQ_API_KEYS.length) {
-        const errMsg = handle429(r);
-        if (!errMsg) return tryFetch(attempt + 1); // retry with next key
+      if (r.status === 429) {
+        const errMsg = handle429(r, attempt, GROQ_API_KEYS.length);
+        if (!errMsg) return tryFetch(attempt + 1);
         throw new Error(errMsg);
       }
       throw new Error("Groq " + r.status);
@@ -95,8 +94,8 @@ chrome.runtime.onConnect.addListener((port) => {
       });
 
       if (!resp.ok) {
-        if (resp.status === 429 && attempt < GROQ_API_KEYS.length) {
-          const errMsg = handle429(resp);
+        if (resp.status === 429) {
+          const errMsg = handle429(resp, attempt, GROQ_API_KEYS.length);
           if (!errMsg) return tryStream(attempt + 1);
           port.postMessage({ error: errMsg });
           return;
