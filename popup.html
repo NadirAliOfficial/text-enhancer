@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Text Enhancer Settings</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    width: 340px;
+    min-height: 420px;
+    background: #141414;
+    color: #e0e0e0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 13px;
+  }
+
+  /* ── Header ── */
+  .header {
+    background: #1a1a1a;
+    border-bottom: 1px solid #2a2a2a;
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .header-left { display: flex; align-items: center; gap: 9px; }
+  .logo {
+    width: 28px; height: 28px; background: linear-gradient(135deg,#6c47ff,#3b82f6);
+    border-radius: 8px; display: flex; align-items: center; justify-content: center;
+    font-size: 14px; color: #fff;
+  }
+  .header-title { font-weight: 700; font-size: 14px; color: #fff; }
+  .header-sub   { font-size: 11px; color: #666; margin-top: 1px; }
+  .status-badge {
+    background: #1a3a1a; border: 1px solid #2a6e2a; color: #4ade80;
+    border-radius: 20px; padding: 4px 10px; font-size: 11px; font-weight: 600;
+    display: flex; align-items: center; gap: 5px;
+  }
+  .status-dot { width: 6px; height: 6px; background: #4ade80; border-radius: 50%; }
+
+  /* ── Tabs ── */
+  .tabs {
+    display: flex;
+    background: #1a1a1a;
+    border-bottom: 1px solid #2a2a2a;
+    padding: 0 8px;
+    gap: 2px;
+  }
+  .tab {
+    padding: 9px 12px; cursor: pointer; font-size: 12px; color: #777;
+    border-bottom: 2px solid transparent; transition: all 0.15s; white-space: nowrap;
+  }
+  .tab:hover { color: #ccc; }
+  .tab.active { color: #6c47ff; border-bottom-color: #6c47ff; font-weight: 600; }
+
+  /* ── Content ── */
+  .panel { display: none; padding: 14px 16px; }
+  .panel.active { display: block; }
+
+  /* ── Section ── */
+  .section-title {
+    font-size: 11px; font-weight: 700; color: #555; text-transform: uppercase;
+    letter-spacing: 0.8px; margin-bottom: 10px; margin-top: 14px;
+  }
+  .section-title:first-child { margin-top: 0; }
+
+  /* ── Row ── */
+  .row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 0; border-bottom: 1px solid #1f1f1f;
+  }
+  .row:last-child { border-bottom: none; }
+  .row-label { color: #ccc; flex: 1; }
+  .row-sub   { font-size: 11px; color: #555; margin-top: 2px; }
+
+  /* ── Toggle ── */
+  .toggle { position: relative; width: 36px; height: 20px; cursor: pointer; flex-shrink: 0; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle-track {
+    position: absolute; inset: 0; background: #333; border-radius: 20px; transition: 0.2s;
+  }
+  .toggle input:checked + .toggle-track { background: #6c47ff; }
+  .toggle-thumb {
+    position: absolute; top: 3px; left: 3px;
+    width: 14px; height: 14px; background: #fff; border-radius: 50%; transition: 0.2s;
+  }
+  .toggle input:checked ~ .toggle-thumb { left: 19px; }
+
+  /* ── Radio group ── */
+  .radio-group { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .radio-btn {
+    padding: 5px 11px; border-radius: 20px; border: 1px solid #333;
+    background: #1e1e1e; color: #aaa; cursor: pointer; font-size: 12px; transition: 0.15s;
+  }
+  .radio-btn:hover   { border-color: #555; color: #ddd; }
+  .radio-btn.active  { background: #6c47ff; border-color: #6c47ff; color: #fff; font-weight: 600; }
+
+  /* ── Slider ── */
+  .slider-row { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+  .slider-row input[type=range] {
+    flex: 1; accent-color: #6c47ff; height: 4px; cursor: pointer;
+  }
+  .slider-val {
+    width: 36px; text-align: center; background: #1e1e1e; border: 1px solid #333;
+    border-radius: 5px; padding: 3px 4px; font-size: 12px; color: #ccc;
+  }
+
+  /* ── Input ── */
+  .text-input {
+    width: 100%; background: #1e1e1e; border: 1px solid #333; border-radius: 7px;
+    color: #e0e0e0; padding: 7px 10px; font-size: 12px; outline: none;
+    font-family: inherit; margin-top: 6px; transition: border 0.15s;
+  }
+  .text-input:focus { border-color: #6c47ff; }
+
+  /* ── Select ── */
+  .select-input {
+    background: #1e1e1e; border: 1px solid #333; border-radius: 7px;
+    color: #e0e0e0; padding: 5px 8px; font-size: 12px; outline: none;
+    cursor: pointer; font-family: inherit;
+  }
+  .select-input:focus { border-color: #6c47ff; }
+
+  /* ── Save button ── */
+  .save-btn {
+    display: block; width: 100%; margin-top: 16px;
+    background: linear-gradient(135deg,#6c47ff,#3b82f6);
+    border: none; border-radius: 8px; color: #fff; font-size: 13px;
+    font-weight: 600; padding: 9px; cursor: pointer; transition: opacity 0.15s;
+    font-family: inherit;
+  }
+  .save-btn:hover { opacity: 0.9; }
+  .save-btn:active { opacity: 0.8; }
+
+  /* ── Footer ── */
+  .footer {
+    padding: 10px 16px; border-top: 1px solid #1f1f1f;
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 11px; color: #444;
+  }
+  .footer a { color: #6c47ff; text-decoration: none; }
+
+  .toast {
+    position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
+    background: #1a3a1a; border: 1px solid #2a6e2a; color: #4ade80;
+    border-radius: 8px; padding: 7px 16px; font-size: 12px; font-weight: 600;
+    opacity: 0; transition: opacity 0.2s; pointer-events: none; white-space: nowrap;
+  }
+  .toast.show { opacity: 1; }
+
+  .api-key-row { position: relative; }
+  .api-key-row .eye-btn {
+    position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+    background: none; border: none; color: #555; cursor: pointer; font-size: 14px;
+    margin-top: 3px;
+  }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="header-left">
+    <div class="logo">✦</div>
+    <div>
+      <div class="header-title">Text Enhancer</div>
+      <div class="header-sub">Powered by Groq AI</div>
+    </div>
+  </div>
+  <div class="status-badge" id="statusBadge">
+    <span class="status-dot"></span> Active
+  </div>
+</div>
+
+<!-- Tabs -->
+<div class="tabs">
+  <div class="tab active" data-tab="general">General</div>
+  <div class="tab" data-tab="smartreply">Smart Reply</div>
+  <div class="tab" data-tab="actions">Actions</div>
+  <div class="tab" data-tab="api">API</div>
+</div>
+
+<!-- ── General Tab ── -->
+<div class="panel active" id="tab-general">
+  <div class="section-title">Auto-Suggest</div>
+
+  <div class="row">
+    <div>
+      <div class="row-label">Enable auto-suggest</div>
+      <div class="row-sub">Show inline AI suggestions while typing</div>
+    </div>
+    <label class="toggle">
+      <input type="checkbox" id="autoSuggest" checked>
+      <div class="toggle-track"></div>
+      <div class="toggle-thumb"></div>
+    </label>
+  </div>
+
+  <div class="row">
+    <div style="width:100%">
+      <div class="row-label">Trigger delay</div>
+      <div class="radio-group" id="suggestDelay">
+        <div class="radio-btn active" data-val="1000">1s</div>
+        <div class="radio-btn" data-val="1500">1.5s</div>
+        <div class="radio-btn" data-val="2000">2s</div>
+        <div class="radio-btn" data-val="3000">3s</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div style="width:100%">
+      <div class="row-label">Min text length to trigger</div>
+      <div class="slider-row">
+        <input type="range" id="minLength" min="5" max="50" value="8" step="1">
+        <div class="slider-val" id="minLengthVal">8</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-title">Interface</div>
+
+  <div class="row">
+    <div>
+      <div class="row-label">Show ✦ trigger button</div>
+      <div class="row-sub">Floating button next to focused inputs</div>
+    </div>
+    <label class="toggle">
+      <input type="checkbox" id="showTrigger" checked>
+      <div class="toggle-track"></div>
+      <div class="toggle-thumb"></div>
+    </label>
+  </div>
+
+  <div class="row">
+    <div>
+      <div class="row-label">Desktop notifications</div>
+      <div class="row-sub">New message alerts from Fiverr</div>
+    </div>
+    <label class="toggle">
+      <input type="checkbox" id="notifications" checked>
+      <div class="toggle-track"></div>
+      <div class="toggle-thumb"></div>
+    </label>
+  </div>
+
+  <button class="save-btn" id="saveGeneral">Save Settings</button>
+</div>
+
+<!-- ── Smart Reply Tab ── -->
+<div class="panel" id="tab-smartreply">
+  <div class="section-title">Behaviour</div>
+
+  <div class="row">
+    <div>
+      <div class="row-label">Smart Reply button</div>
+      <div class="row-sub">Show 💬 button next to Fiverr inbox</div>
+    </div>
+    <label class="toggle">
+      <input type="checkbox" id="srEnabled" checked>
+      <div class="toggle-track"></div>
+      <div class="toggle-thumb"></div>
+    </label>
+  </div>
+
+  <div class="row">
+    <div style="width:100%">
+      <div class="row-label">Reply length</div>
+      <div class="radio-group" id="replyLength">
+        <div class="radio-btn" data-val="short">Short</div>
+        <div class="radio-btn active" data-val="auto">Auto</div>
+        <div class="radio-btn" data-val="detailed">Detailed</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div style="width:100%">
+      <div class="row-label">Default tone</div>
+      <div class="radio-group" id="replyTone">
+        <div class="radio-btn active" data-val="auto">Auto</div>
+        <div class="radio-btn" data-val="professional">Professional</div>
+        <div class="radio-btn" data-val="friendly">Friendly</div>
+        <div class="radio-btn" data-val="brief">Brief</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-title">Reminders</div>
+
+  <div class="row">
+    <div>
+      <div class="row-label">Follow-up reminder</div>
+      <div class="row-sub">Notify if client hasn't replied</div>
+    </div>
+    <label class="toggle">
+      <input type="checkbox" id="followUp" checked>
+      <div class="toggle-track"></div>
+      <div class="toggle-thumb"></div>
+    </label>
+  </div>
+
+  <div class="row">
+    <div style="width:100%">
+      <div class="row-label">Remind after</div>
+      <div class="radio-group" id="followUpHours">
+        <div class="radio-btn" data-val="12">12h</div>
+        <div class="radio-btn active" data-val="24">24h</div>
+        <div class="radio-btn" data-val="48">48h</div>
+        <div class="radio-btn" data-val="72">72h</div>
+      </div>
+    </div>
+  </div>
+
+  <button class="save-btn" id="saveSR">Save Settings</button>
+</div>
+
+<!-- ── Actions Tab ── -->
+<div class="panel" id="tab-actions">
+  <div class="section-title">Shorten</div>
+
+  <div class="row">
+    <div style="width:100%">
+      <div class="row-label">Shorten strength</div>
+      <div class="radio-group" id="shortenStrength">
+        <div class="radio-btn" data-val="light">Light</div>
+        <div class="radio-btn active" data-val="medium">Medium</div>
+        <div class="radio-btn" data-val="aggressive">Aggressive</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-title">Translate</div>
+
+  <div class="row">
+    <div style="width:100%">
+      <div class="row-label">Target language</div>
+      <div style="margin-top:6px">
+        <select class="select-input" id="translateTarget" style="width:100%">
+          <option value="auto">Auto (EN ↔ detected)</option>
+          <option value="english">English</option>
+          <option value="spanish">Spanish</option>
+          <option value="french">French</option>
+          <option value="arabic">Arabic</option>
+          <option value="german">German</option>
+          <option value="portuguese">Portuguese</option>
+          <option value="chinese">Chinese</option>
+          <option value="japanese">Japanese</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-title">Custom Prompt Default</div>
+
+  <div class="row">
+    <div style="width:100%">
+      <div class="row-label">Default instruction</div>
+      <textarea class="text-input" id="customDefault" rows="2"
+        placeholder="e.g. Make this more concise and impactful."></textarea>
+    </div>
+  </div>
+
+  <div class="section-title">Enabled Actions</div>
+  <div id="actionToggles"></div>
+
+  <button class="save-btn" id="saveActions">Save Settings</button>
+</div>
+
+<!-- ── API Tab ── -->
+<div class="panel" id="tab-api">
+  <div class="section-title">Groq API</div>
+
+  <div class="row">
+    <div style="width:100%">
+      <div class="row-label">API Key</div>
+      <div class="api-key-row" style="margin-top:6px">
+        <input type="password" class="text-input" id="apiKey"
+          placeholder="gsk_..." style="margin-top:0;padding-right:32px">
+        <button class="eye-btn" id="eyeBtn" title="Show/hide">👁</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div style="width:100%">
+      <div class="row-label">Model</div>
+      <div style="margin-top:6px">
+        <select class="select-input" id="modelSelect" style="width:100%">
+          <option value="llama-3.3-70b-versatile">Llama 3.3 70B (recommended)</option>
+          <option value="llama-3.1-8b-instant">Llama 3.1 8B (faster)</option>
+          <option value="mixtral-8x7b-32768">Mixtral 8x7B</option>
+          <option value="gemma2-9b-it">Gemma 2 9B</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div style="width:100%">
+      <div class="row-label">Temperature</div>
+      <div class="row-sub">Lower = more focused, Higher = more creative</div>
+      <div class="slider-row">
+        <input type="range" id="temperature" min="0" max="10" value="3" step="1">
+        <div class="slider-val" id="temperatureVal">0.3</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div>
+      <div class="row-label">Connection</div>
+    </div>
+    <button id="testBtn" style="background:#1e1e1e;border:1px solid #444;color:#ccc;
+      padding:5px 12px;border-radius:7px;cursor:pointer;font-size:12px;font-family:inherit;">
+      Test API
+    </button>
+  </div>
+
+  <button class="save-btn" id="saveAPI">Save Settings</button>
+</div>
+
+<!-- Footer -->
+<div class="footer">
+  <span>Text Enhancer v1.1</span>
+  <span><a href="https://github.com/NadirAliOfficial/text-enhancer" target="_blank">GitHub</a></span>
+</div>
+
+<div class="toast" id="toast">Settings saved!</div>
+
+<script src="popup.js"></script>
+</body>
+</html>
