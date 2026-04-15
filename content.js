@@ -930,13 +930,23 @@
     if (!searchRoot || searchRoot === container) searchRoot = container;
     if (!searchRoot) return [];
 
-    // ── Strategy 1: "Me" label detection (works for Fiverr inbox list layout)
-    // Fiverr inbox shows "Me" as an explicit sender label next to Nadir's messages.
-    // Find all those labels and mark their ancestor rows so we can classify content.
+    // ── Strategy 1: "Me" / own-name label detection
+    // Fiverr shows "Me" in Chrome but full name (e.g. "Nadir Ali Khan") in Brave.
+    // Detect own-name from the page header if present.
+    const pageOwnerName = (
+      document.querySelector("[data-testid='username'], .username-text, .seller-name, .user-profile-name")
+        ?.innerText?.trim() ||
+      document.querySelector("h1, h2")?.innerText?.trim() ||
+      ""
+    ).toLowerCase();
+
     const myRowRoots = new Set();
     Array.from(searchRoot.querySelectorAll("*")).forEach(el => {
       if (el.children.length > 0) return;
-      if (el.innerText?.trim() !== "Me") return;
+      const t = el.innerText?.trim();
+      if (!t) return;
+      const isMe = t === "Me" || (pageOwnerName && t.toLowerCase() === pageOwnerName);
+      if (!isMe) return;
       // Walk up and tag the next 5 ancestors as "my message" containers
       let node = el.parentElement;
       for (let i = 0; i < 5 && node && node !== searchRoot; i++) {
@@ -982,8 +992,10 @@
       if (/^(create an offer|send offer|add extras|view order|order details|request extension|learn more|share feedback|we have your back)$/i.test(text)) return;
       if (/joined the conversation/i.test(text)) return;
       if (/take a moment to browse/i.test(text)) return;
-      // Bot/system messages referencing the freelancer by full name
-      if (/Nadir Ali Khan/i.test(text)) return;
+      // Sender labels (own name used as label, like "Me") — skip, already handled above
+      if (pageOwnerName && text.toLowerCase() === pageOwnerName) return;
+      // Bot/system messages that only contain the freelancer name + filler
+      if (/^Nadir Ali Khan\s*(is|has|was|will|joined|left)?(\s|$)/i.test(text) && text.length < 60) return;
 
       const rect = el.getBoundingClientRect();
       if (rect.width < 10 || rect.height < 5) return;
@@ -1079,8 +1091,8 @@
         : "Keep the reply to 2–3 sentences max.";
 
     const now = new Date();
-    const todayStr = now.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
-    const system = `Today's date is ${todayStr}. Each message in the conversation is prefixed with its send date in [Mon DD] format. Resolve all relative date references (today/tomorrow/yesterday) in prior messages against their actual send date — for example, if a message sent on Apr 14 said "tomorrow", that means Apr 15, which is TODAY. In this conversation, "You" are the sender and "Them" is the other person. Write the next message FROM "You" in response to "Them"'s last message. ${lengthGuide}${timeNote ? " " + timeNote : ""} Stay strictly on the topics discussed. Use correct temporal references based on today's date. Do NOT repeat or rephrase anything You already said. Output ONLY the reply text — no labels, no explanations.`;
+    const todayStr = now.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+    const system = `[Context only — do NOT mention dates in your reply] Today is ${todayStr}. Messages are prefixed with [Mon DD] — use these to resolve relative date words (e.g. "tomorrow" in an Apr 14 message = Apr 15 = today). In this conversation, "You" are the sender and "Them" is the other person. Write the next message FROM "You" directly responding to "Them"'s last message. ${lengthGuide}${timeNote ? " " + timeNote : ""} Stay on topic. Do NOT repeat anything You already said. Do NOT include dates or greetings unless the conversation just started. Output ONLY the reply text.`;
 
     const userContent = lines
       ? `Conversation:\n${lines}${draftText ? `\n\nDraft started: ${draftText}` : ""}\n\nWrite You's reply:`
