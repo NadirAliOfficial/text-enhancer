@@ -1095,7 +1095,7 @@
         ? "Keep the reply to 1–2 sentences."
         : "Keep the reply to 2–3 sentences max.";
 
-    const system = `In this conversation, "You" are the sender and "Them" is the other person. Write the next message FROM "You" in response to "Them"'s last message. ${lengthGuide}${timeNote ? " " + timeNote : ""} Stay strictly on the topics discussed. Output ONLY the reply text — no labels, no explanations.`;
+    const system = `In this conversation, "You" are the sender and "Them" is the other person. Write the next message FROM "You" in response to "Them"'s last message. ${lengthGuide}${timeNote ? " " + timeNote : ""} Stay strictly on the topics discussed. Do NOT repeat, rephrase, or echo anything You already said in previous messages — only add new value. Output ONLY the reply text — no labels, no explanations.`;
 
     const userContent = lines
       ? `Conversation:\n${lines}${draftText ? `\n\nDraft started: ${draftText}` : ""}\n\nWrite You's reply:`
@@ -1120,6 +1120,17 @@
 
     // Only reply if client sent the last message
     if (chatMsgs.length > 0 && chatMsgs[chatMsgs.length - 1].role === "me") {
+      s.textContent = "✓";
+      setTimeout(() => { s.textContent = origText; s.style.pointerEvents = ""; }, 1800);
+      return;
+    }
+
+    // Skip if client's last message is just a short closing acknowledgment
+    // and the message before it was already from "me" (conversation concluded)
+    const lastClient = chatMsgs[chatMsgs.length - 1]?.content?.trim().toLowerCase() || "";
+    const prevRole   = chatMsgs[chatMsgs.length - 2]?.role;
+    const CLOSING    = /^(ok|okay|yes|yes ok|yes okay|sure|thanks|thank you|got it|noted|sounds good|great|perfect|alright|k|👍|✅|🙏)\.?$/;
+    if (!draftText && CLOSING.test(lastClient) && prevRole === "me") {
       s.textContent = "✓";
       setTimeout(() => { s.textContent = origText; s.style.pointerEvents = ""; }, 1800);
       return;
