@@ -363,7 +363,7 @@
       const fail = e => { if (!settled) { settled = true; port.disconnect(); reject(e); } };
       const timer = setTimeout(() => fail(new Error("Timeout")), 60000);
       port.onMessage.addListener(msg => {
-        if (msg.error) { clearTimeout(timer); fail(new Error(msg.error)); return; }
+        if (msg.error) { clearTimeout(timer); fail(new Error(parseError(msg.error))); return; }
         if (msg.token) raw += msg.token;
         if (msg.done)  { clearTimeout(timer); done(clean(raw)); }
       });
@@ -716,6 +716,24 @@
     chrome.runtime.sendMessage(msg, cb);
   }
 
+  // Translate raw error strings (including rate_limited:N) into user-friendly messages
+  let _rateLimitUntil = 0;
+  function parseError(raw) {
+    if (typeof raw === "string" && raw.startsWith("rate_limited:")) {
+      const secs = parseInt(raw.split(":")[1]) || 60;
+      _rateLimitUntil = Date.now() + secs * 1000;
+      return `Rate limited — wait ${secs}s`;
+    }
+    return raw;
+  }
+  function isRateLimited() {
+    return Date.now() < _rateLimitUntil;
+  }
+  function rateLimitMsg() {
+    const secs = Math.ceil((_rateLimitUntil - Date.now()) / 1000);
+    return `Rate limited — wait ${secs}s`;
+  }
+
   function wordCount(text) {
     return text.trim().split(/\s+/).filter(Boolean).length;
   }
@@ -872,7 +890,7 @@
     let raw = "";
 
     port.onMessage.addListener((msg) => {
-      if (msg.error) { onError(msg.error); return; }
+      if (msg.error) { onError(parseError(msg.error)); return; }
       if (msg.token) {
         raw += msg.token;
         const preview = cleanLeft(raw);
@@ -1147,7 +1165,7 @@
 
       port.onMessage.addListener((msg) => {
         console.log("[TE] SR msg:", JSON.stringify(msg).slice(0, 120));
-        if (msg.error) { clearTimeout(timer); fail(new Error(msg.error)); return; }
+        if (msg.error) { clearTimeout(timer); fail(new Error(parseError(msg.error))); return; }
         if (msg.token) raw += msg.token;
         if (msg.done)  { clearTimeout(timer); done(clean(raw)); }
       });
@@ -1156,7 +1174,7 @@
         const err = chrome.runtime.lastError?.message;
         clearTimeout(timer);
         console.log("[TE] SR port disconnected, raw.length:", raw.length, "err:", err);
-        if (!settled) fail(new Error(err || "Port closed — reload page and retry"));
+        if (!settled) fail(new Error(err ? parseError(err) : "Port closed — reload page and retry"));
       });
 
       port.postMessage({
@@ -1340,7 +1358,7 @@
           const fail = e => { if (!settled) { settled = true; port.disconnect(); reject(e); } };
           const timer = setTimeout(() => fail(new Error("Timed out")), 60000);
           port.onMessage.addListener(msg => {
-            if (msg.error) { clearTimeout(timer); fail(new Error(msg.error)); return; }
+            if (msg.error) { clearTimeout(timer); fail(new Error(parseError(msg.error))); return; }
             if (msg.token) raw += msg.token;
             if (msg.done)  { clearTimeout(timer); done(clean(raw)); }
           });
@@ -1399,6 +1417,7 @@
     if (CFG.autoSuggest && text.length >= CFG.minLength && text !== lastSuggestInput && !shouldSkip(text)) {
       suggestTimer = setTimeout(() => {
         if (focused !== el) return;
+        if (isRateLimited()) { showSuggestLoading(el, "suggest"); showSuggestResult(rateLimitMsg()); setTimeout(hideSuggest, 2500); return; }
         const current = getText(el).trim();
         if (current.length < CFG.minLength || current === lastSuggestInput || shouldSkip(current)) return;
 
@@ -1421,9 +1440,14 @@
             if (final && !tooSimilar(current, final)) showSuggestResult(final);
             else hideSuggest();
           },
-          () => {        // error
+          (errMsg) => {  // error
             if (suggestGenId !== myId) return;
-            hideSuggest();
+            if (errMsg && errMsg.startsWith("Rate limited")) {
+              showSuggestResult(errMsg);
+              setTimeout(hideSuggest, 3000);
+            } else {
+              hideSuggest();
+            }
           }
         );
       }, Number(CFG.suggestDelay) || 1500);
@@ -1594,7 +1618,7 @@
       const fail = e => { if (!settled) { settled = true; port.disconnect(); reject(e); } };
       const timer = setTimeout(() => fail(new Error("Timeout")), 30000);
       port.onMessage.addListener(msg => {
-        if (msg.error) { clearTimeout(timer); fail(new Error(msg.error)); return; }
+        if (msg.error) { clearTimeout(timer); fail(new Error(parseError(msg.error))); return; }
         if (msg.token) raw += msg.token;
         if (msg.done)  { clearTimeout(timer); done(clean(raw)); }
       });

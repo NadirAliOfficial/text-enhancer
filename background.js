@@ -31,7 +31,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     body: JSON.stringify(body),
     signal: ctrl.signal,
   })
-    .then(r => { if (!r.ok) throw new Error("Groq " + r.status); return r.json(); })
+    .then(r => {
+      if (!r.ok) {
+        if (r.status === 429) {
+          const wait = r.headers.get("retry-after") || r.headers.get("x-ratelimit-reset-requests") || "60";
+          throw new Error("rate_limited:" + Math.ceil(Number(wait) || 60));
+        }
+        throw new Error("Groq " + r.status);
+      }
+      return r.json();
+    })
     .then(data => {
       controllers.delete(tabId);
       sendResponse({ ok: true, text: data.choices?.[0]?.message?.content || "" });
@@ -75,7 +84,15 @@ chrome.runtime.onConnect.addListener((port) => {
         signal: ctrl.signal,
       });
 
-      if (!resp.ok) { port.postMessage({ error: "Groq " + resp.status }); return; }
+      if (!resp.ok) {
+        if (resp.status === 429) {
+          const wait = resp.headers.get("retry-after") || resp.headers.get("x-ratelimit-reset-requests") || "60";
+          port.postMessage({ error: "rate_limited:" + Math.ceil(Number(wait) || 60) });
+        } else {
+          port.postMessage({ error: "Groq " + resp.status });
+        }
+        return;
+      }
 
       const reader = resp.body.getReader();
       const dec    = new TextDecoder();
