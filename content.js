@@ -74,7 +74,7 @@
     improve:      "Improve the clarity, grammar, and flow of the text in <input> tags. Keep the same meaning, tone, length, and speaker perspective. Output ONLY the improved text. Do NOT include <input> tags or any explanation.",
     rewrite:      "Rephrase the text in <input> tags using different wording. Keep the same meaning, length, and speaker perspective. Output ONLY the rewritten text. Do NOT include <input> tags or any explanation.",
     proofread:    "Fix all grammar, spelling, and punctuation in the text in <input> tags. Do not change wording or style. Output ONLY the corrected text without <input> tags and without any explanation.",
-    shorten:      "Shorten the text in <input> tags. Keep the core meaning and speaker's voice. Output ONLY the shortened text. Do NOT include <input> tags or any explanation.",
+    shorten:      "Shorten the text in <input> tags. Keep ALL points and information — only remove filler and redundancy. Keep the speaker's voice. Output ONLY the shortened text. Do NOT include <input> tags or any explanation.",
     professional: "Rewrite the text in <input> tags to sound formal and professional. Keep the same meaning, the same number of sentences, and the same length — do not add new sentences or new content. Output ONLY the rewritten text. Do NOT include <input> tags or any explanation.",
     friendly:     "Rewrite the text in <input> tags to sound warm and conversational. Keep the same meaning, the same number of sentences, and the same length — do not add new sentences or new content. Output ONLY the rewritten text. Do NOT include <input> tags or any explanation.",
     translate:    "Detect the language of the text in <input> tags. If it is not English, translate it to English. If it is already English, translate it to Spanish. Output ONLY the translation without <input> tags and without any explanation.",
@@ -661,17 +661,34 @@
     return text.trim().split(/\s+/).filter(Boolean).length;
   }
 
+  // ── Shorten strength (read from popup settings) ──────────────────────────
+  // light = ~70% of original, medium = ~50%, aggressive = ~30%
+  let shortenStrength = "medium";
+  try {
+    chrome.storage.local.get("te_settings", r => {
+      if (r.te_settings?.shortenStrength) shortenStrength = r.te_settings.shortenStrength;
+    });
+  } catch (_) {}
+
+  function getShortenTarget(w, strength) {
+    const ratios = { light: [0.65, 0.75], medium: [0.40, 0.55], aggressive: [0.20, 0.32] };
+    const [lo, hi] = ratios[strength] || ratios.medium;
+    const loW = Math.max(10, Math.round(w * lo));
+    const hiW = Math.max(15, Math.round(w * hi));
+    return `${loW} to ${hiW} words`;
+  }
+
   // Returns the right system message — shorten gets a precise word-count target
   function getSystemMsg(type, text) {
     if (type === "shorten") {
-      const w = wordCount(text);
-      let target;
-      if (w > 400)      target = "200 to 280 words";
-      else if (w > 200) target = "90 to 130 words";
-      else if (w > 100) target = "45 to 70 words";
-      else if (w > 50)  target = "20 to 35 words";
-      else              target = "about half the current length";
-      return `Shorten the text in <input> tags to approximately ${target}. Keep the core meaning and the speaker's voice. Output ONLY the shortened text, no explanation.`;
+      const w      = wordCount(text);
+      const target = getShortenTarget(w, shortenStrength);
+      const rule   = shortenStrength === "light"
+        ? "Remove filler words and redundant phrases only."
+        : shortenStrength === "aggressive"
+        ? "Be very concise — cut everything except the essential points."
+        : "Remove filler words and combine sentences where possible.";
+      return `Shorten the text in <input> tags to approximately ${target}. IMPORTANT: Keep EVERY point, fact, and piece of information from the original — do NOT omit any content. ${rule} Keep the speaker's voice. Output ONLY the shortened text, no explanation.`;
     }
     return SYSTEM_MSG[type];
   }
@@ -685,14 +702,12 @@
     const inputTokens = Math.ceil(chars / 3.5);
     const num_ctx = Math.min(32768, Math.max(2048, inputTokens * 2 + 1200));
 
-    // num_predict: -1 = unlimited (model stops when done naturally).
-    // Only shorten gets a ceiling since output is intentionally smaller than input.
+    // num_predict: only shorten gets a ceiling — output is intentionally smaller than input
     let num_predict;
     if (type === "shorten") {
-      if (w > 400)      num_predict = 500;
-      else if (w > 200) num_predict = 280;
-      else if (w > 100) num_predict = 150;
-      else              num_predict = 80;
+      const ratios = { light: 0.80, medium: 0.60, aggressive: 0.40 };
+      const ratio  = ratios[shortenStrength] || 0.60;
+      num_predict  = Math.max(60, Math.ceil(w * ratio * 1.4)); // 1.4x headroom
     } else {
       num_predict = -1;
     }
