@@ -17,50 +17,10 @@
     { label: "Custom",       type: "custom",       icon: "⚙️" },
   ];
 
-  // Few-shot chat messages �� 2 examples per action keeps prompt short and inference fast
+  // No few-shot examples — saves ~150 tokens per request; system prompts are clear enough
   const SHOTS = {
-    improve: [
-      { role: "user",      content: "<input>cant make it tmrw sry</input>" },
-      { role: "assistant", content: "I cannot make it tomorrow, sorry." },
-      { role: "user",      content: "<input>i wanna ask if u have time to review my work</input>" },
-      { role: "assistant", content: "I wanted to ask if you have time to review my work." },
-    ],
-    rewrite: [
-      { role: "user",      content: "<input>I am sorry for the late reply I was busy</input>" },
-      { role: "assistant", content: "Please accept my apologies for the delayed response; I was occupied with other matters." },
-      { role: "user",      content: "<input>I sent the proposal yesterday did you get a chance to look at it</input>" },
-      { role: "assistant", content: "I submitted the proposal yesterday — have you had a chance to review it?" },
-    ],
-    proofread: [
-      { role: "user",      content: "<input>i recieved ur messege and will get back to u soon as posible</input>" },
-      { role: "assistant", content: "I received your message and will get back to you as soon as possible." },
-      { role: "user",      content: "<input>their going to there house to pick there stuff</input>" },
-      { role: "assistant", content: "They're going to their house to pick up their stuff." },
-    ],
-    shorten: [
-      { role: "user",      content: "<input>I just wanted to let you know that I will not be able to attend the meeting scheduled for tomorrow morning due to a prior commitment</input>" },
-      { role: "assistant", content: "I cannot make tomorrow's meeting — prior commitment." },
-      { role: "user",      content: "<input>Could you please let me know at your earliest convenience whether you will be able to complete the task that was assigned to you last week</input>" },
-      { role: "assistant", content: "Can you let me know if you can complete last week's task?" },
-    ],
-    professional: [
-      { role: "user",      content: "<input>hey can u send me that asap</input>" },
-      { role: "assistant", content: "Could you please send that at your earliest convenience?" },
-      { role: "user",      content: "<input>the client rejected the work and wants a refund this is crazy</input>" },
-      { role: "assistant", content: "The client has rejected the deliverable and is requesting a refund." },
-    ],
-    friendly: [
-      { role: "user",      content: "<input>Please submit the report by end of day.</input>" },
-      { role: "assistant", content: "Hey, could you send over the report by end of day? Thanks so much!" },
-      { role: "user",      content: "<input>We regret to inform you that your application has not been successful.</input>" },
-      { role: "assistant", content: "Hey, so sorry to share this — unfortunately your application did not make it through this time." },
-    ],
-    translate: [
-      { role: "user",      content: "<input>Bonjour, comment puis-je vous aider aujourd'hui?</input>" },
-      { role: "assistant", content: "Hello, how can I help you today?" },
-      { role: "user",      content: "<input>Hello, I would like to schedule a meeting for next week.</input>" },
-      { role: "assistant", content: "Hola, me gustaría programar una reunión para la próxima semana." },
-    ],
+    improve: [], rewrite: [], proofread: [], shorten: [],
+    professional: [], friendly: [], translate: [],
   };
 
   // ── Live settings (synced in real-time via storage.onChanged) ───────────
@@ -770,14 +730,16 @@
     const inputTokens = Math.ceil(chars / 3.5);
     const num_ctx = Math.min(32768, Math.max(2048, inputTokens * 2 + 1200));
 
-    // num_predict: only shorten gets a ceiling — output is intentionally smaller than input
+    // Cap output tokens to prevent runaway generation and save quota
     let num_predict;
     if (type === "shorten") {
       const ratios = { light: 0.80, medium: 0.60, aggressive: 0.40 };
       const ratio  = ratios[CFG.shortenStrength] || 0.60;
-      num_predict  = Math.max(60, Math.ceil(w * ratio * 1.4)); // 1.4x headroom
+      num_predict  = Math.max(60, Math.ceil(w * ratio * 1.4));
+    } else if (type === "proofread" || type === "improve") {
+      num_predict = Math.max(80, Math.ceil(w * 1.2)); // output ≈ input length
     } else {
-      num_predict = -1;
+      num_predict = Math.max(80, Math.ceil(w * 1.5)); // rewrite/professional/friendly can be slightly longer
     }
 
     return { temperature: 0.3, num_predict, num_ctx, keep_alive: -1 };
@@ -1100,7 +1062,7 @@
       }
     }
 
-    const recentMsgs = chatMsgs.slice(-6);
+    const recentMsgs = chatMsgs.slice(-4);
     const fmtDate = (ts) => ts ? ts.toLocaleDateString("en-US", { month: "short", day: "numeric" }) : null;
     const lines = recentMsgs.map(m => {
       const who  = m.role === "me" ? "You" : "Them";

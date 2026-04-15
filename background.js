@@ -3,6 +3,19 @@ const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 
 const controllers = new Map();
 
+function groqHeaders() {
+  return { "Content-Type": "application/json", "Authorization": "Bearer " + getGroqKey() };
+}
+
+// On 429, rotate key and return wait seconds (or 0 to retry immediately with next key)
+function handle429(r) {
+  rotateGroqKey();
+  const wait = r.headers.get("retry-after") || r.headers.get("x-ratelimit-reset-requests") || "0";
+  const secs = Math.ceil(Number(wait) || 0);
+  // If next key is fresh (secs == 0 or small), retry immediately; else surface the wait
+  return secs > 5 ? "rate_limited:" + secs : null; // null = retry with new key
+}
+
 // ── Non-streaming (manual actions) ───────────────────────────────────────────
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type !== "ollama") return;
@@ -15,32 +28,32 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   const { messages, options = {} } = message.payload;
   const body = {
-    model: "llama-3.3-70b-versatile",
+    model: message.payload.model || "llama-3.3-70b-versatile",
     messages,
     temperature: options.temperature ?? 0.3,
     ...(options.num_predict && options.num_predict > 0 ? { max_tokens: options.num_predict } : {}),
     stream: false,
   };
 
-  fetch(GROQ_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": "Bearer " + GROQ_API_KEY,
-    },
-    body: JSON.stringify(body),
-    signal: ctrl.signal,
-  })
-    .then(r => {
-      if (!r.ok) {
-        if (r.status === 429) {
-          const wait = r.headers.get("retry-after") || r.headers.get("x-ratelimit-reset-requests") || "60";
-          throw new Error("rate_limited:" + Math.ceil(Number(wait) || 60));
-        }
-        throw new Error("Groq " + r.status);
+  async function tryFetch(attempt) {
+    const r = await fetch(GROQ_URL, {
+      method: "POST",
+      headers: groqHeaders(),
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+    if (!r.ok) {
+      if (r.status === 429 && attempt < GROQ_API_KEYS.length) {
+        const errMsg = handle429(r);
+        if (!errMsg) return tryFetch(attempt + 1); // retry with next key
+        throw new Error(errMsg);
       }
-      return r.json();
-    })
+      throw new Error("Groq " + r.status);
+    }
+    return r.json();
+  }
+
+  tryFetch(1)
     .then(data => {
       controllers.delete(tabId);
       sendResponse({ ok: true, text: data.choices?.[0]?.message?.content || "" });
@@ -54,7 +67,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-// ── Streaming (auto-suggest) ──────────────────────────────────────────────────
+// ── Streaming (auto-suggest + smart reply) ────────────────────────────────────
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== "te-stream") return;
 
@@ -66,31 +79,29 @@ chrome.runtime.onConnect.addListener((port) => {
 
     const { messages, options = {} } = payload;
     const body = {
-      model: "llama-3.3-70b-versatile",
+      model: payload.model || "llama-3.3-70b-versatile",
       messages,
       temperature: options.temperature ?? 0.3,
       ...(options.num_predict && options.num_predict > 0 ? { max_tokens: options.num_predict } : {}),
       stream: true,
     };
 
-    try {
+    async function tryStream(attempt) {
       const resp = await fetch(GROQ_URL, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": "Bearer " + GROQ_API_KEY,
-        },
+        headers: groqHeaders(),
         body: JSON.stringify(body),
         signal: ctrl.signal,
       });
 
       if (!resp.ok) {
-        if (resp.status === 429) {
-          const wait = resp.headers.get("retry-after") || resp.headers.get("x-ratelimit-reset-requests") || "60";
-          port.postMessage({ error: "rate_limited:" + Math.ceil(Number(wait) || 60) });
-        } else {
-          port.postMessage({ error: "Groq " + resp.status });
+        if (resp.status === 429 && attempt < GROQ_API_KEYS.length) {
+          const errMsg = handle429(resp);
+          if (!errMsg) return tryStream(attempt + 1);
+          port.postMessage({ error: errMsg });
+          return;
         }
+        port.postMessage({ error: "Groq " + resp.status });
         return;
       }
 
@@ -117,6 +128,10 @@ chrome.runtime.onConnect.addListener((port) => {
           } catch (_) {}
         }
       }
+    }
+
+    try {
+      await tryStream(1);
     } catch (e) {
       if (e.name !== "AbortError") port.postMessage({ error: e.message });
     }
