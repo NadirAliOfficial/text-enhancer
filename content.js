@@ -628,7 +628,14 @@
   }
 
   function hideMenu() {
-    if (menu) { menu.style.display = "none"; resetBtns(); }
+    if (menu) {
+      menu.style.display  = "none";
+      menu.style.resize   = "";
+      menu.style.overflow = "";
+      menu.style.width    = "";
+      menu.style.height   = "";
+      resetBtns();
+    }
   }
 
   function resetBtns() {
@@ -1173,9 +1180,11 @@
     const m = getMenu();
     m.innerHTML = "";
     m.style.minWidth = "280px";
+    m.style.resize   = "both";
+    m.style.overflow = "auto";
 
     const wrapper = document.createElement("div");
-    wrapper.style.cssText = "padding:10px;display:flex;flex-direction:column;gap:8px;";
+    wrapper.style.cssText = "padding:10px;display:flex;flex-direction:column;gap:8px;height:100%;";
 
     // Header row
     const topRow = document.createElement("div");
@@ -1199,7 +1208,7 @@
     textarea.value = customPrompt;
     textarea.placeholder = "Tell AI what to do, e.g:\n• Tell him I need 2 more days\n• Ask for his requirements\n• Apologize for the delay";
     textarea.rows = 4;
-    textarea.style.cssText = "background:#2d2d2d;color:#fff;border:1px solid #555;border-radius:6px;padding:8px;font-size:12px;outline:none;resize:vertical;width:100%;box-sizing:border-box;font-family:inherit;line-height:1.5;";
+    textarea.style.cssText = "background:#2d2d2d;color:#fff;border:1px solid #555;border-radius:6px;padding:8px;font-size:12px;outline:none;resize:vertical;width:100%;box-sizing:border-box;font-family:inherit;line-height:1.5;min-height:72px;";
     textarea.addEventListener("keydown", (e) => e.stopPropagation());
 
     // Chat context toggle
@@ -1241,41 +1250,53 @@
       // Build system + user content with optional chat context
       let system, userContent;
       if (useChatCtx) {
-        const chatLines = chatMsgs.map(m =>
-          `${m.role === "me" ? "Nadir (me)" : "Client"}: ${m.content}`
+        const chatLines = chatMsgs.slice(-12).map(m =>
+          `${m.role === "me" ? "You" : "Them"}: ${m.content}`
         ).join("\n");
-        system = `You are helping Nadir Ali, a Top Rated Freelancer on Fiverr, write a message to a client. Use the chat history for context. Follow the instruction exactly. Keep the reply concise and professional (2–3 sentences max). Output ONLY the message text — no explanation.`;
-        userContent = `Chat history:\n${chatLines}\n\nInstruction: ${instruction}${inputText ? `\n\nDraft: ${inputText}` : ""}\n\nWrite Nadir's reply:`;
+        system = `You are writing a message on behalf of the person labeled "You" in this conversation. Follow the instruction exactly. Keep the reply concise (2–3 sentences max). Output ONLY the message text — no labels, no explanation.`;
+        userContent = `Conversation:\n${chatLines}\n\nInstruction: ${instruction}${inputText ? `\n\nDraft: ${inputText}` : ""}\n\nWrite the reply:`;
       } else {
-        system = `Follow this instruction: ${instruction}\nThe text is in <input> tags. Output ONLY the result — no explanation.`;
+        system = `Follow this instruction: ${instruction}\nText is in <input> tags. Output ONLY the result — no explanation.`;
         userContent = `<input>${inputText || "..."}</input>`;
       }
 
-      hideMenu();
-      m.style.minWidth = "";
-
       try {
         const result = await new Promise((resolve, reject) => {
-          chrome.runtime.sendMessage({
-            type: "ollama",
-            payload: {
-              model: MODEL, stream: false,
-              options: { temperature: 0.65, num_predict: 150 },
-              messages: [
-                { role: "system", content: system },
-                { role: "user",   content: userContent },
-              ],
-            },
-          }, (resp) => {
-            if (chrome.runtime.lastError) return reject(new Error("Refresh page and retry"));
-            if (!resp?.ok) return reject(new Error(resp?.error || "AI error"));
-            resolve(clean(resp.text));
+          let port;
+          try { port = chrome.runtime.connect({ name: "te-stream" }); }
+          catch (e) { reject(new Error("Reload page and retry")); return; }
+          let raw = ""; let settled = false;
+          const done = v => { if (!settled) { settled = true; port.disconnect(); resolve(v); } };
+          const fail = e => { if (!settled) { settled = true; port.disconnect(); reject(e); } };
+          const timer = setTimeout(() => fail(new Error("Timed out")), 60000);
+          port.onMessage.addListener(msg => {
+            if (msg.error) { clearTimeout(timer); fail(new Error(msg.error)); return; }
+            if (msg.token) raw += msg.token;
+            if (msg.done)  { clearTimeout(timer); done(clean(raw)); }
+          });
+          port.onDisconnect.addListener(() => { clearTimeout(timer); if (!settled) fail(new Error("Reload page and retry")); });
+          port.postMessage({
+            messages: [
+              { role: "system", content: system },
+              { role: "user",   content: userContent },
+            ],
+            options: { temperature: 0.65, num_predict: 200 },
           });
         });
         if (inputText) { undoStack.push({ el, text: inputText }); if (undoStack.length > 5) undoStack.shift(); }
         setText(el, result);
+        hideMenu();
         trackUsage("custom");
-      } catch (_) {}
+      } catch (err) {
+        runBtn.innerHTML = `<span class="te-btn-icon">⚠️</span><span>${err.message}</span>`;
+        setTimeout(() => {
+          runBtn.innerHTML = '<span class="te-btn-icon">▶</span><span>Run</span>';
+          runBtn.disabled = false;
+        }, 2500);
+        return;
+      }
+      runBtn.innerHTML = '<span class="te-btn-icon">▶</span><span>Run</span>';
+      runBtn.disabled = false;
     });
 
     wrapper.appendChild(topRow);
