@@ -1083,9 +1083,12 @@
     }
 
     const recentMsgs = chatMsgs.slice(-6);
-    const lines = recentMsgs.map(m =>
-      `${m.role === "me" ? "You" : "Them"}: ${m.content}`
-    ).join("\n");
+    const fmtDate = (ts) => ts ? ts.toLocaleDateString("en-US", { month: "short", day: "numeric" }) : null;
+    const lines = recentMsgs.map(m => {
+      const who  = m.role === "me" ? "You" : "Them";
+      const date = fmtDate(m.timestamp);
+      return date ? `[${date}] ${who}: ${m.content}` : `${who}: ${m.content}`;
+    }).join("\n");
 
     // Match reply length to last client message complexity
     const lastClientMsg = chatMsgs[chatMsgs.length - 1]?.content || "";
@@ -1095,8 +1098,9 @@
         ? "Keep the reply to 1–2 sentences."
         : "Keep the reply to 2–3 sentences max.";
 
-    const todayStr = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
-    const system = `Today's date is ${todayStr}. In this conversation, "You" are the sender and "Them" is the other person. Write the next message FROM "You" in response to "Them"'s last message. ${lengthGuide}${timeNote ? " " + timeNote : ""} Stay strictly on the topics discussed. Use correct temporal references (today/tomorrow/yesterday) based on today's date. Do NOT repeat, rephrase, or echo anything You already said in previous messages — only add new value. Output ONLY the reply text — no labels, no explanations.`;
+    const now = new Date();
+    const todayStr = now.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+    const system = `Today's date is ${todayStr}. Each message in the conversation is prefixed with its send date in [Mon DD] format. Resolve all relative date references (today/tomorrow/yesterday) in prior messages against their actual send date — for example, if a message sent on Apr 14 said "tomorrow", that means Apr 15, which is TODAY. In this conversation, "You" are the sender and "Them" is the other person. Write the next message FROM "You" in response to "Them"'s last message. ${lengthGuide}${timeNote ? " " + timeNote : ""} Stay strictly on the topics discussed. Use correct temporal references based on today's date. Do NOT repeat or rephrase anything You already said. Output ONLY the reply text — no labels, no explanations.`;
 
     const userContent = lines
       ? `Conversation:\n${lines}${draftText ? `\n\nDraft started: ${draftText}` : ""}\n\nWrite You's reply:`
