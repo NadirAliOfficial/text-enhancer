@@ -1429,22 +1429,39 @@
   }
 
   function onInput(e) {
-    if (!isEditable(e.target)) return;
-    handleTyping(e.target);
+    const target = e?.target || document.activeElement;
+    if (!isEditable(target)) return;
+    handleTyping(target);
   }
 
-  // listen on input + paste + compositionend for full coverage
+  // listen on input + keyup + paste + compositionend
+  // keyup is a fallback for Brave which sometimes doesn't fire 'input' on contenteditable
   document.addEventListener("input",          onInput);
+  document.addEventListener("keyup",          (e) => {
+    if (e.key && e.key.length === 1 || e.key === "Backspace" || e.key === "Delete") onInput(e);
+  });
   document.addEventListener("paste",          (e) => setTimeout(() => onInput(e), 50));
   document.addEventListener("compositionend", onInput);
+
+  // MutationObserver fallback: watch focused element's text content for changes
+  // Catches Brave cases where neither input nor keyup fires
+  let _inputObserver = null;
+  function watchFocusedEl(el) {
+    _inputObserver?.disconnect();
+    if (!el || !el.isContentEditable) return;
+    _inputObserver = new MutationObserver(() => handleTyping(el));
+    _inputObserver.observe(el, { childList: true, subtree: true, characterData: true });
+  }
 
   document.addEventListener("focusin", (e) => {
     if (!isEditable(e.target)) return;
     focused = e.target; lastFocused = e.target;
     positionTrigger(e.target);
+    watchFocusedEl(e.target);
   });
 
   document.addEventListener("focusout", (e) => {
+    _inputObserver?.disconnect(); _inputObserver = null;
     setTimeout(() => {
       const active = document.activeElement;
       if (
