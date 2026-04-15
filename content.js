@@ -356,7 +356,7 @@
     s.textContent = "⏳"; s.style.pointerEvents = "none";
     const result = await new Promise((resolve, reject) => {
       let port;
-      try { port = chrome.runtime.connect({ name: "te-stream" }); }
+      try { port = runtimeConnect("te-stream"); }
       catch (e) { reject(e); return; }
       let raw = ""; let settled = false;
       const done = v => { if (!settled) { settled = true; port.disconnect(); resolve(v); } };
@@ -703,6 +703,19 @@
 
   // ── Dynamic options based on text size ───────────────────────────────────
 
+  // ── Extension context guard ───────────────────────────────────────────────
+  // chrome.runtime becomes undefined when the extension is reloaded while the
+  // page is open. All AI calls go through this helper — it throws a clean error
+  // that surfaces as "Refresh page to reconnect" instead of a cryptic crash.
+  function runtimeConnect(name) {
+    if (!chrome?.runtime?.connect) throw new Error("Refresh page to reconnect");
+    return chrome.runtime.connect({ name });
+  }
+  function runtimeSendMessage(msg, cb) {
+    if (!chrome?.runtime?.sendMessage) { cb({ ok: false, error: "Refresh page to reconnect" }); return; }
+    chrome.runtime.sendMessage(msg, cb);
+  }
+
   function wordCount(text) {
     return text.trim().split(/\s+/).filter(Boolean).length;
   }
@@ -757,7 +770,7 @@
   function callOllama(text, type) {
     return new Promise((resolve, reject) => {
       try {
-        chrome.runtime.sendMessage({
+        runtimeSendMessage({
           type: "ollama",
           payload: {
             model: MODEL,
@@ -770,7 +783,7 @@
             ],
           },
         }, (resp) => {
-          if (chrome.runtime.lastError) return reject(new Error("Refresh page and retry"));
+          if (chrome.runtime?.lastError) return reject(new Error("Refresh page and retry"));
           if (!resp?.ok) return reject(new Error(resp?.error || "Ollama error"));
           resolve(clean(resp.text));
         });
@@ -853,7 +866,7 @@
   // Returns the port — disconnect it to cancel.
   function streamOllama(text, type, onToken, onDone, onError) {
     let port;
-    try { port = chrome.runtime.connect({ name: "te-stream" }); }
+    try { port = runtimeConnect("te-stream"); }
     catch (_) { onError("Reload page and retry"); return null; }
 
     let raw = "";
@@ -1117,7 +1130,7 @@
     // Use the streaming port — more reliable than sendMessage (avoids SW cold-start drops)
     const result = await new Promise((resolve, reject) => {
       let port;
-      try { port = chrome.runtime.connect({ name: "te-stream" }); }
+      try { port = runtimeConnect("te-stream"); }
       catch (e) { reject(new Error("Reload page and retry: " + e.message)); return; }
 
       let raw = "";
@@ -1315,7 +1328,7 @@
       try {
         const result = await new Promise((resolve, reject) => {
           let port;
-          try { port = chrome.runtime.connect({ name: "te-stream" }); }
+          try { port = runtimeConnect("te-stream"); }
           catch (e) { reject(new Error("Reload page and retry")); return; }
           let raw = ""; let settled = false;
           const done = v => { if (!settled) { settled = true; port.disconnect(); resolve(v); } };
@@ -1569,7 +1582,7 @@
 
     const result = await new Promise((resolve, reject) => {
       let port;
-      try { port = chrome.runtime.connect({ name: "te-stream" }); }
+      try { port = runtimeConnect("te-stream"); }
       catch (e) { reject(e); return; }
       let raw = ""; let settled = false;
       const done = v => { if (!settled) { settled = true; port.disconnect(); resolve(v); } };
@@ -1699,7 +1712,7 @@
   // ── Warmup: ask background to load the model so first real request is instant
   setTimeout(() => {
     try {
-      chrome.runtime.sendMessage({
+      runtimeSendMessage({
         type: "ollama",
         payload: {
           model: MODEL,
@@ -1707,7 +1720,7 @@
           messages: [{ role: "user", content: "." }],
           options: { num_predict: 1, num_ctx: 256, keep_alive: -1 },
         },
-      }, () => { chrome.runtime.lastError; });
+      }, () => { chrome.runtime?.lastError; });
     } catch (_) {}
   }, 3000);
 
