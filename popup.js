@@ -1,7 +1,7 @@
-// ── Defaults ─────────────────────────────────────────────────────────────────
+// ── Defaults ──────────────────────────────────────────────────────────────────
 const DEFAULTS = {
   autoSuggest:     true,
-  suggestDelay:    1000,
+  suggestDelay:    1500,
   minLength:       8,
   showTrigger:     true,
   notifications:   true,
@@ -26,10 +26,23 @@ const ACTION_LABELS = {
 };
 
 let settings = { ...DEFAULTS };
+let saveTimer = null;
+
+// ── Auto-save (debounced 400ms) ───────────────────────────────────────────────
+function scheduleSave() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    chrome.storage.local.set({
+      te_settings:    settings,
+      te_custom_prompt: settings.customDefault,
+    }, () => showToast("✓ Applied"));
+  }, 400);
+}
 
 // ── Load settings ─────────────────────────────────────────────────────────────
-chrome.storage.local.get("te_settings", (r) => {
-  if (r.te_settings) settings = { ...DEFAULTS, ...r.te_settings };
+chrome.storage.local.get(["te_settings", "te_custom_prompt"], (r) => {
+  if (r.te_settings)      settings = { ...DEFAULTS, ...r.te_settings };
+  if (r.te_custom_prompt) settings.customDefault = r.te_custom_prompt;
   renderAll();
 });
 
@@ -44,14 +57,15 @@ document.querySelectorAll(".tab").forEach(tab => {
 });
 
 // ── Radio groups ──────────────────────────────────────────────────────────────
-function initRadioGroup(id, settingKey) {
+function initRadioGroup(id, key) {
   const group = document.getElementById(id);
   if (!group) return;
   group.querySelectorAll(".radio-btn").forEach(btn => {
     btn.addEventListener("click", () => {
       group.querySelectorAll(".radio-btn").forEach(b => b.classList.remove("active"));
       btn.classList.add("active");
-      settings[settingKey] = btn.dataset.val;
+      settings[key] = btn.dataset.val;
+      scheduleSave();
     });
   });
 }
@@ -64,7 +78,8 @@ initRadioGroup("shortenStrength", "shortenStrength");
 // ── Toggles ───────────────────────────────────────────────────────────────────
 ["autoSuggest","showTrigger","notifications","srEnabled","followUp"].forEach(id => {
   const el = document.getElementById(id);
-  if (el) el.addEventListener("change", () => { settings[id] = el.checked; });
+  if (!el) return;
+  el.addEventListener("change", () => { settings[id] = el.checked; scheduleSave(); });
 });
 
 // ── Sliders ───────────────────────────────────────────────────────────────────
@@ -73,6 +88,7 @@ const minLengthVal    = document.getElementById("minLengthVal");
 minLengthSlider.addEventListener("input", () => {
   settings.minLength = parseInt(minLengthSlider.value);
   minLengthVal.textContent = minLengthSlider.value;
+  scheduleSave();
 });
 
 const tempSlider = document.getElementById("temperature");
@@ -80,20 +96,21 @@ const tempVal    = document.getElementById("temperatureVal");
 tempSlider.addEventListener("input", () => {
   settings.temperature = parseInt(tempSlider.value);
   tempVal.textContent = (parseInt(tempSlider.value) / 10).toFixed(1);
+  scheduleSave();
 });
 
-// ── Selects & inputs ──────────────────────────────────────────────────────────
+// ── Selects & text inputs ─────────────────────────────────────────────────────
 document.getElementById("translateTarget").addEventListener("change", (e) => {
-  settings.translateTarget = e.target.value;
+  settings.translateTarget = e.target.value; scheduleSave();
 });
 document.getElementById("modelSelect").addEventListener("change", (e) => {
-  settings.modelSelect = e.target.value;
+  settings.modelSelect = e.target.value; scheduleSave();
 });
 document.getElementById("customDefault").addEventListener("input", (e) => {
-  settings.customDefault = e.target.value;
+  settings.customDefault = e.target.value; scheduleSave();
 });
 document.getElementById("apiKey").addEventListener("input", (e) => {
-  settings.apiKey = e.target.value.trim();
+  settings.apiKey = e.target.value.trim(); scheduleSave();
 });
 
 // ── Eye button ────────────────────────────────────────────────────────────────
@@ -123,6 +140,7 @@ function buildActionToggles() {
       } else {
         if (!settings.disabledActions.includes(action)) settings.disabledActions.push(action);
       }
+      scheduleSave();
     });
     container.appendChild(row);
   });
@@ -133,7 +151,7 @@ document.getElementById("testBtn").addEventListener("click", async () => {
   const btn = document.getElementById("testBtn");
   btn.textContent = "Testing…"; btn.disabled = true;
   try {
-    const key = document.getElementById("apiKey").value.trim();
+    const key = settings.apiKey || document.getElementById("apiKey").value.trim();
     if (!key) throw new Error("Enter API key first");
     const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
@@ -144,36 +162,39 @@ document.getElementById("testBtn").addEventListener("click", async () => {
         max_tokens: 5,
       }),
     });
-    if (!r.ok) throw new Error("API error " + r.status);
+    if (!r.ok) throw new Error("HTTP " + r.status);
     btn.textContent = "✓ Connected"; btn.style.color = "#4ade80";
-    setTimeout(() => { btn.textContent = "Test API"; btn.style.color = ""; btn.disabled = false; }, 2000);
+    setTimeout(() => { btn.textContent = "Test API"; btn.style.color = ""; btn.disabled = false; }, 2500);
   } catch (e) {
     btn.textContent = "✗ " + e.message; btn.style.color = "#f87171";
     setTimeout(() => { btn.textContent = "Test API"; btn.style.color = ""; btn.disabled = false; }, 3000);
   }
 });
 
-// ── Save ──────────────────────────────────────────────────────────────────────
-function saveSettings() {
-  chrome.storage.local.set({ te_settings: settings }, () => {
-    // Also save individual keys content.js reads directly
-    chrome.storage.local.set({
-      te_custom_prompt: settings.customDefault,
-    });
-    showToast("Settings saved!");
-  });
-}
-document.getElementById("saveGeneral").addEventListener("click", saveSettings);
-document.getElementById("saveSR").addEventListener("click", saveSettings);
-document.getElementById("saveActions").addEventListener("click", saveSettings);
-document.getElementById("saveAPI").addEventListener("click", saveSettings);
+// ── Remove individual save buttons — auto-save handles everything ─────────────
+document.querySelectorAll(".save-btn").forEach(btn => btn.remove());
 
-// ── Toast ─────────────────────────────────────────────────────────────────────
+// ── Toast + status badge ──────────────────────────────────────────────────────
 function showToast(msg) {
+  // Brief flash on the header badge
+  const badge  = document.getElementById("statusBadge");
+  const label  = document.getElementById("statusText");
+  const dot    = badge?.querySelector(".status-dot");
+  if (label) {
+    label.textContent = msg;
+    if (dot) dot.style.background = "#4ade80";
+    clearTimeout(badge._t);
+    badge._t = setTimeout(() => {
+      label.textContent = "Active";
+      if (dot) dot.style.background = "";
+    }, 1500);
+  }
+  // Also flash the bottom toast
   const t = document.getElementById("toast");
   t.textContent = msg;
   t.classList.add("show");
-  setTimeout(() => t.classList.remove("show"), 2000);
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove("show"), 1500);
 }
 
 // ── Render all from settings ──────────────────────────────────────────────────
@@ -192,26 +213,24 @@ function renderAll() {
       b.classList.toggle("active", b.dataset.val === String(val));
     });
   }
-  setRadio("suggestDelay",    String(settings.suggestDelay || 1000));
-  setRadio("replyLength",     settings.replyLength   || "auto");
-  setRadio("replyTone",       settings.replyTone     || "auto");
+  setRadio("suggestDelay",    String(settings.suggestDelay || 1500));
+  setRadio("replyLength",     settings.replyLength    || "auto");
+  setRadio("replyTone",       settings.replyTone      || "auto");
   setRadio("followUpHours",   String(settings.followUpHours || 24));
   setRadio("shortenStrength", settings.shortenStrength || "medium");
 
   // Sliders
-  minLengthSlider.value = settings.minLength || 8;
-  minLengthVal.textContent = settings.minLength || 8;
-  tempSlider.value = settings.temperature ?? 3;
-  tempVal.textContent = ((settings.temperature ?? 3) / 10).toFixed(1);
+  minLengthSlider.value    = settings.minLength   ?? 8;
+  minLengthVal.textContent = settings.minLength   ?? 8;
+  tempSlider.value         = settings.temperature ?? 3;
+  tempVal.textContent      = ((settings.temperature ?? 3) / 10).toFixed(1);
 
   // Selects
   document.getElementById("translateTarget").value = settings.translateTarget || "auto";
   document.getElementById("modelSelect").value     = settings.modelSelect || "llama-3.3-70b-versatile";
 
-  // Text
+  // Text inputs
   document.getElementById("customDefault").value = settings.customDefault || DEFAULTS.customDefault;
-
-  // API key (masked)
   if (settings.apiKey) document.getElementById("apiKey").value = settings.apiKey;
 
   // Action toggles

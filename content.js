@@ -63,8 +63,56 @@
     ],
   };
 
-  let customPrompt = "Make this text more concise and impactful.";
-  try { chrome.storage.local.get("te_custom_prompt", r => { if (r.te_custom_prompt) customPrompt = r.te_custom_prompt; }); } catch (_) {}
+  // ── Live settings (synced in real-time via storage.onChanged) ───────────
+  const CFG = {
+    autoSuggest:     true,
+    suggestDelay:    1500,
+    minLength:       8,
+    showTrigger:     true,
+    notifications:   true,
+    srEnabled:       true,
+    replyLength:     "auto",
+    replyTone:       "auto",
+    followUp:        true,
+    followUpHours:   24,
+    shortenStrength: "medium",
+    translateTarget: "auto",
+    customDefault:   "Make this text more concise and impactful.",
+    disabledActions: [],
+    modelSelect:     "llama-3.3-70b-versatile",
+    temperature:     3,
+  };
+
+  function applySettings(s) {
+    if (!s) return;
+    Object.assign(CFG, s);
+    // Trigger visibility
+    if (trigger) trigger.style.display = CFG.showTrigger ? "flex" : "none";
+    // SR button visibility
+    if (srBtn) srBtn.style.display = CFG.srEnabled && (focused || lastFocused) ? "flex" : "none";
+    // Rebuild menu if action list changed (only when menu is not open)
+    if (menu && menu.style.display !== "flex") rebuildMenu(menu);
+  }
+
+  try {
+    chrome.storage.local.get(["te_settings", "te_custom_prompt", "te_templates", "te_site_usage"], r => {
+      if (r.te_settings)    applySettings(r.te_settings);
+      if (r.te_custom_prompt) CFG.customDefault = r.te_custom_prompt;
+      if (r.te_site_usage)  siteUsage = r.te_site_usage;
+      if (r.te_templates)   templates = r.te_templates;
+    });
+  } catch (_) {}
+
+  // Real-time: apply changes the moment popup saves
+  try {
+    chrome.storage.onChanged.addListener((changes) => {
+      if (changes.te_settings?.newValue)    applySettings(changes.te_settings.newValue);
+      if (changes.te_custom_prompt?.newValue) CFG.customDefault = changes.te_custom_prompt.newValue;
+      if (changes.te_templates?.newValue)   templates = changes.te_templates.newValue;
+    });
+  } catch (_) {}
+
+  let customPrompt = CFG.customDefault;
 
   // SHOTS for dynamic types (empty — no few-shot needed for translate/custom)
   SHOTS.translate = SHOTS.translate || [];
@@ -103,9 +151,7 @@
   let responseTimerInt = null;  // setInterval for the waiting-time badge on SR button
   let followUpTimer    = null;  // setTimeout for follow-up reminder
 
-  // Load per-site usage + templates from storage
-  try { chrome.storage.local.get("te_site_usage", r => { if (r.te_site_usage) siteUsage = r.te_site_usage; }); } catch (_) {}
-  try { chrome.storage.local.get("te_templates",  r => { if (r.te_templates)  templates = r.te_templates;  }); } catch (_) {}
+  // (loaded centrally above via chrome.storage.local.get)
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -661,15 +707,6 @@
     return text.trim().split(/\s+/).filter(Boolean).length;
   }
 
-  // ── Shorten strength (read from popup settings) ──────────────────────────
-  // light = ~70% of original, medium = ~50%, aggressive = ~30%
-  let shortenStrength = "medium";
-  try {
-    chrome.storage.local.get("te_settings", r => {
-      if (r.te_settings?.shortenStrength) shortenStrength = r.te_settings.shortenStrength;
-    });
-  } catch (_) {}
-
   function getShortenTarget(w, strength) {
     const ratios = { light: [0.65, 0.75], medium: [0.40, 0.55], aggressive: [0.20, 0.32] };
     const [lo, hi] = ratios[strength] || ratios.medium;
@@ -682,10 +719,10 @@
   function getSystemMsg(type, text) {
     if (type === "shorten") {
       const w      = wordCount(text);
-      const target = getShortenTarget(w, shortenStrength);
-      const rule   = shortenStrength === "light"
+      const target = getShortenTarget(w, CFG.shortenStrength);
+      const rule   = CFG.shortenStrength === "light"
         ? "Remove filler words and redundant phrases only."
-        : shortenStrength === "aggressive"
+        : CFG.shortenStrength === "aggressive"
         ? "Be very concise — cut everything except the essential points."
         : "Remove filler words and combine sentences where possible.";
       return `Shorten the text in <input> tags to approximately ${target}. IMPORTANT: Keep EVERY point, fact, and piece of information from the original — do NOT omit any content. ${rule} Keep the speaker's voice. Output ONLY the shortened text, no explanation.`;
@@ -706,7 +743,7 @@
     let num_predict;
     if (type === "shorten") {
       const ratios = { light: 0.80, medium: 0.60, aggressive: 0.40 };
-      const ratio  = ratios[shortenStrength] || 0.60;
+      const ratio  = ratios[CFG.shortenStrength] || 0.60;
       num_predict  = Math.max(60, Math.ceil(w * ratio * 1.4)); // 1.4x headroom
     } else {
       num_predict = -1;
@@ -1340,12 +1377,12 @@
 
     const text = getText(el).trim();
 
-    // Auto-suggest: stream after 1.5s pause, text ≥8 chars, only if changed and not a URL/code
-    if (text.length >= 8 && text !== lastSuggestInput && !shouldSkip(text)) {
+    // Auto-suggest: stream after configurable pause, text ≥ minLength chars
+    if (CFG.autoSuggest && text.length >= CFG.minLength && text !== lastSuggestInput && !shouldSkip(text)) {
       suggestTimer = setTimeout(() => {
         if (focused !== el) return;
         const current = getText(el).trim();
-        if (current.length < 8 || current === lastSuggestInput || shouldSkip(current)) return;
+        if (current.length < CFG.minLength || current === lastSuggestInput || shouldSkip(current)) return;
 
         const myId   = ++suggestGenId;
         const action = pickAction(current);
@@ -1371,7 +1408,7 @@
             hideSuggest();
           }
         );
-      }, 1500);
+      }, Number(CFG.suggestDelay) || 1500);
     }
   }
 
