@@ -1494,11 +1494,17 @@
     clearInterval(responseTimerInt);
     const s = srBtn;
     if (!s) return;
-    const lastThem = [...chatMsgs].reverse().find(m => m.role === "them");
-    if (!lastThem?.timestamp) { s.title = "Smart Reply"; return; }
+
+    // Only show timer if the LAST message is from the client — not from me
+    const lastMsg = chatMsgs[chatMsgs.length - 1];
+    if (!lastMsg || lastMsg.role !== "them" || !lastMsg.timestamp) {
+      s.title = "Smart Reply";
+      s.style.borderColor = "#444";
+      return;
+    }
 
     const update = () => {
-      const waited = Date.now() - lastThem.timestamp.getTime();
+      const waited = Date.now() - lastMsg.timestamp.getTime();
       const label  = fmtWait(waited);
       s.title = `Smart Reply — client waiting ${label}`;
       // Colour: green < 1h, amber 1–3h, red > 3h
