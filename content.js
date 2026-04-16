@@ -1712,9 +1712,12 @@
     newMsgObserver.observe(container, { childList: true, subtree: true });
   }
 
-  // Request notification permission once
-  if (Notification.permission === "default") {
-    Notification.requestPermission();
+  // Request notification permission only on Fiverr, and only when user interacts
+  if (Notification.permission === "default" && window.location.hostname.includes("fiverr.com")) {
+    document.addEventListener("click", function reqNotif() {
+      Notification.requestPermission();
+      document.removeEventListener("click", reqNotif);
+    }, { once: true });
   }
 
   // Start watcher + timer + mood when an editable field is focused
