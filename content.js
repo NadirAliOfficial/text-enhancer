@@ -836,7 +836,10 @@
       const ratio  = ratios[CFG.shortenStrength] || 0.60;
       num_predict  = Math.max(60, Math.ceil(w * ratio * 1.4));
     } else {
-      num_predict = -1; // unlimited — Groq omits max_tokens, Ollama generates until done
+      // Rewrites stay roughly input-sized — cap well under Groq's free-tier
+      // 8K tokens-per-minute limit, which an omitted/unbounded max_tokens can
+      // exceed outright and get rejected as "Request too large".
+      num_predict = Math.min(2000, Math.max(150, inputTokens * 2));
     }
 
     return { temperature: 0.3, num_predict, num_ctx, keep_alive: -1 };
