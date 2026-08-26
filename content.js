@@ -321,7 +321,6 @@
       if (!tDrag) return;
       tMoved = true;
       toolbarDragged = true;
-      toolbar.classList.add("te-no-caret"); // manually positioned — the auto-anchor caret would now point at nothing
       const x = Math.max(4, Math.min(e.clientX - tDrag.ox, window.innerWidth  - toolbar.offsetWidth  - 4));
       const y = Math.max(4, Math.min(e.clientY - tDrag.oy, window.innerHeight - toolbar.offsetHeight - 4));
       toolbar.style.left = x + "px";
@@ -345,7 +344,6 @@
           toolbar.style.left = r.te_toolbar_pos.left;
           toolbar.style.top  = r.te_toolbar_pos.top;
           toolbarDragged     = true;
-          toolbar.classList.add("te-no-caret");
         }
       });
     } catch (_) {}
@@ -1798,11 +1796,9 @@
     }, 200);
   });
 
-  // capture: true — LinkedIn (and many feeds) scroll via an inner container,
-  // not the window, so a bubble-phase window listener never fires for those.
   window.addEventListener("scroll", () => {
     if (focused) { positionToolbar(focused); positionSuggest(focused); }
-  }, { passive: true, capture: true });
+  }, { passive: true });
 
   window.addEventListener("resize", () => {
     if (focused) { positionToolbar(focused); positionSuggest(focused); }
